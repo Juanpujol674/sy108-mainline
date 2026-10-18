@@ -1,0 +1,5 @@
+005-target-kernel-version.patch
+010-kernel-7.3-build.patch
+020-kernel-7.3-userspace.patch
+030-procd-child-lifecycle.patch
+040-sysupgrade-prepare-hook.patch

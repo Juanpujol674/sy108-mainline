@@ -1,0 +1,9 @@
+{
+  "repo": "https://github.com/jason-liu-4980/linux-udx710.git",
+  "upstream": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git",
+  "upstream_tag": "v7.3-rc7",
+  "upstream_commit": "24a19b953e2a3d0ea5a8c4951a0ab8f32720c907",
+  "commit": "606233b63c83997b59d68cdceaab4dd6ca4a3286",
+  "archive": "linux-7.3.0-rc7-sy108-606233b63c83.tar.gz",
+  "sha256": "6ee4031a7f2df84f217e79b572c35d5ff7208338d95bc8a3cf913133364e221f"
+}

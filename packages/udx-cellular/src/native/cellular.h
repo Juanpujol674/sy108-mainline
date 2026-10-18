@@ -1,0 +1,133 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+#ifndef UDX_CELLULAR_H
+#define UDX_CELLULAR_H
+#include "common.h"
+#include <signal.h>
+#include <stdatomic.h>
+#ifndef CELL_RUN
+#define CELL_RUN "/run/udx-cellular"
+#endif
+#ifndef CELL_STORE
+#define CELL_STORE "/etc/udx-cellular"
+#endif
+#ifndef CELL_BOOT
+#define CELL_BOOT "/proc/sys/kernel/random/boot_id"
+#endif
+#ifndef CELL_OWNER_SOCKET
+#define CELL_OWNER_SOCKET "/run/udx-cpnv-warm/control.sock"
+#endif
+#ifndef CELL_AT_SESSION
+#define CELL_AT_SESSION "/sys/class/spipe/stty_lte1/session"
+#endif
+#define CELL_TELEMETRY_TASKS 8
+struct owner_status {
+	pid_t pid;
+	int pidfd;
+	char epoch[17];
+	uint64_t generation;
+};
+struct owner {
+	struct owner_status identity;
+	int pidfd;
+};
+struct at_channel {
+	char pending[65537];
+	size_t used;
+	char sms_kind[8];
+	unsigned sms_length;
+};
+struct transport {
+	int fd, urc_fd, lock_fd;
+	struct owner owner;
+	atomic_bool poisoned;
+	bool sms_input_pending;
+	char boot[37], command[257];
+	struct at_channel channel, notifications;
+	J *sms_events;
+	bool wait_mode;
+	J *mode_events;
+	double last_log;
+};
+struct controller {
+	struct transport transport;
+	J *config, *status, *data;
+	bool want_data, initialized, ims_initialized;
+	char error[512], sms_instance[33], sms_active_request[33];
+	bool background, background_deferred;
+	bool (*foreground_pending)(void *);
+	void *foreground_context;
+	double telemetry_due[CELL_TELEMETRY_TASKS];
+	unsigned telemetry_failures[CELL_TELEMETRY_TASKS];
+	char telemetry_sim[48];
+};
+int owner_query(struct owner_status *row);
+int owner_check(struct owner *owner);
+void owner_close(struct owner *owner);
+int transport_admit(struct transport *t);
+int transport_init(struct transport *t);
+int transport_reopen(struct transport *t);
+int transport_drain(struct transport *t);
+void transport_close(struct transport *t);
+char *transport_command(struct transport *t, const char *command, double seconds, const char *pdu,
+			bool network_mode);
+char *transport_debug_command(struct transport *t, const char *command, double seconds,
+			      char **failed_response);
+int debug_validate(J *args);
+J *debug_execute(struct controller *c, J *args);
+int transport_poison(struct transport *t, const char *reason);
+int transport_sms_line(struct transport *t, struct at_channel *channel, const char *line);
+J *controller_config(void);
+int controller_init(struct controller *c);
+void controller_destroy(struct controller *c);
+int controller_publish(struct controller *c);
+J *controller_profile(struct controller *c);
+J *controller_execute(struct controller *c, const char *operation, J *args);
+int controller_validate(const char *operation, J *args);
+J *controller_operations(void);
+char *controller_at(struct controller *c, const char *command, double seconds);
+J *controller_query(struct controller *c, const char *command, double seconds, const char *prefix);
+int controller_set_data(struct controller *c, J *session);
+J *controller_disconnect(struct controller *c, bool quiesce);
+J *controller_connect(struct controller *c, unsigned wait_seconds);
+int controller_refresh(struct controller *c);
+int controller_radio_on(struct controller *c);
+char *controller_sim(struct controller *c);
+J *registration(const char *raw, const char *prefix);
+J *parse_pdp(const char *raw, J *profile);
+bool apn_matches(const char *requested, const char *actual);
+int profile_validate(J *p);
+int bearer_active(const char *raw);
+J *bearer_default(const char *raw, J *profile);
+J *sms_execute(struct controller *c, const char *operation, J *args);
+int sms_settings_validate(J *args);
+J *sms_configuration(void);
+int sms_configure(struct controller *c, J *settings);
+J *sms_publish(struct controller *c);
+int sms_process_events(struct controller *c);
+J *sms_refresh(struct controller *c);
+J *sms_inbox(J *rows);
+J *receipt_reserve(const char *operation, J *args, J *row, int *result);
+int receipt_finish(J *row);
+int ims_initialize(struct controller *c);
+int ims_refresh(struct controller *c);
+J *advanced_execute(struct controller *c, const char *operation, J *args);
+int advanced_validate(const char *operation, J *args);
+int advanced_set_mode(struct controller *c, const char *mode, J **result);
+J *apn_execute(struct controller *c, const char *operation, J *args);
+int apn_validate(const char *operation, J *args);
+int apn_auth_validate(J *args);
+J *apn_public_auth(J *config);
+int apn_configure(struct controller *c);
+J *apn_publish(struct controller *c);
+J *apn_direct(struct controller *c, J *args);
+J *info_execute(struct controller *c, const char *operation);
+char *info_identifier(const char *raw, const char *command, const char *prefix, size_t minimum,
+		      size_t maximum, bool hexadecimal);
+int info_sim_identity(struct controller *c);
+J *info_signal(struct controller *c);
+int telemetry_step(struct controller *c);
+int telemetry_publish(struct controller *c);
+J *decode_cells(const char *raw, const char *rat, bool serving);
+J *mode_execute(struct controller *c, const char *operation, J *args);
+int mode_validate(const char *operation, J *args);
+#endif

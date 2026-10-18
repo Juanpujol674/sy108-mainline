@@ -1,0 +1,20 @@
+--- a/include/kernel-version.mk
++++ b/include/kernel-version.mk
+@@ -6,7 +6,7 @@
+   KERNEL_PATCHVER:=$(KERNEL_TESTING_PATCHVER)
+ endif
+ 
+-KERNEL_DETAILS_FILE=$(GENERIC_PLATFORM_DIR)/kernel-$(KERNEL_PATCHVER)
++KERNEL_DETAILS_FILE=$(or $(wildcard $(PLATFORM_DIR)/kernel-$(KERNEL_PATCHVER)),$(GENERIC_PLATFORM_DIR)/kernel-$(KERNEL_PATCHVER))
+ ifeq ($(wildcard $(KERNEL_DETAILS_FILE)),)
+   $(error Missing kernel version/hash file for $(KERNEL_PATCHVER). Please create $(KERNEL_DETAILS_FILE))
+ endif
+@@ -14,7 +14,7 @@
+ include $(KERNEL_DETAILS_FILE)
+ 
+ ifdef KERNEL_TESTING_PATCHVER
+-  KERNEL_TESTING_DETAILS_FILE=$(GENERIC_PLATFORM_DIR)/kernel-$(KERNEL_TESTING_PATCHVER)
++  KERNEL_TESTING_DETAILS_FILE=$(or $(wildcard $(PLATFORM_DIR)/kernel-$(KERNEL_TESTING_PATCHVER)),$(GENERIC_PLATFORM_DIR)/kernel-$(KERNEL_TESTING_PATCHVER))
+   ifeq ($(wildcard $(KERNEL_TESTING_DETAILS_FILE)),)
+     $(error Missing kernel version/hash file for $(KERNEL_TESTING_PATCHVER). Please create $(KERNEL_TESTING_DETAILS_FILE))
+   endif

@@ -1,0 +1,10 @@
+config gadget 'main'
+	option enabled '1'
+	option profile 'ncm'
+	option acm '0'
+	# auto derives from this unit's bootloader-provided factory product serial.
+	# A concrete value is an explicit per-field override, including legacy values.
+	option serial 'auto'
+	option vid '0x1d6b'
+	option dev_mac 'auto'
+	option host_mac 'auto'

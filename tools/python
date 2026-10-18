@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec "${SY108_PYTHON:-python3}" -B "$@"

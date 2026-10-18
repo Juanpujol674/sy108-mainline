@@ -1,0 +1,90 @@
+diff --git a/include/kernel.mk b/include/kernel.mk
+index 5ccc21cde6..7439646a2d 100644
+--- a/include/kernel.mk
++++ b/include/kernel.mk
+@@ -102,6 +102,9 @@ else
+   LINUX_KARCH := $(ARCH)
+ endif
+ 
++# APK represents release candidates with _rc; kernel paths and uname retain -rc.
++LINUX_PACKAGE_VERSION = $(subst -rc,_rc,$(LINUX_VERSION))
++
+ KERNEL_MAKE = $(MAKE) $(KERNEL_MAKEOPTS)
+ 
+ KERNEL_MAKE_FLAGS = \
+@@ -118,7 +121,7 @@ KERNEL_MAKE_FLAGS = \
+ 	CONFIG_SHELL="$(BASH)" \
+ 	$(if $(findstring c,$(OPENWRT_VERBOSE)),V=1,V='') \
+ 	$(if $(PKG_BUILD_ID),LDFLAGS_MODULE=--build-id=0x$(PKG_BUILD_ID)) \
+-	cmd_syscalls= \
++	$(if $(filter 7.3,$(KERNEL_PATCHVER)),,cmd_syscalls=) \
+ 	$(if $(__package_mk),KBUILD_EXTRA_SYMBOLS="$(wildcard $(PKG_SYMVERS_DIR)/*.symvers)")
+ 
+ ifneq (,$(KERNEL_CC))
+@@ -213,8 +216,8 @@ define KernelPackage
+     SECTION:=kernel
+     CATEGORY:=Kernel modules
+     DESCRIPTION:=$(DESCRIPTION)
+-    EXTRA_DEPENDS:=kernel (=$(LINUX_VERSION)~$(LINUX_VERMAGIC)-r$(LINUX_RELEASE))
+-    VERSION:=$(LINUX_VERSION)$(if $(PKG_VERSION),.$(PKG_VERSION))-r$(if $(PKG_RELEASE),$(PKG_RELEASE),$(LINUX_RELEASE))
++    EXTRA_DEPENDS:=kernel (=$(LINUX_PACKAGE_VERSION)~$(LINUX_VERMAGIC)-r$(LINUX_RELEASE))
++    VERSION:=$(LINUX_PACKAGE_VERSION)$(if $(PKG_VERSION),.$(PKG_VERSION))-r$(if $(PKG_RELEASE),$(PKG_RELEASE),$(LINUX_RELEASE))
+     PKGFLAGS:=$(PKGFLAGS)
+     $(call KernelPackage/$(1))
+     $(call KernelPackage/$(1)/$(BOARD))
+diff --git a/package/kernel/linux/Makefile b/package/kernel/linux/Makefile
+index 347cdee129..3c36c46fa5 100644
+--- a/package/kernel/linux/Makefile
++++ b/package/kernel/linux/Makefile
+@@ -53,7 +53,7 @@ define Package/kernel
+   CATEGORY:=Kernel
+   DEFAULT:=y
+   TITLE:=Virtual kernel package
+-  VERSION:=$(LINUX_VERSION)~$(LINUX_VERMAGIC)-r$(LINUX_RELEASE)
++  VERSION:=$(LINUX_PACKAGE_VERSION)~$(LINUX_VERMAGIC)-r$(LINUX_RELEASE)
+   URL:=http://www.kernel.org/
+   PKG_FLAGS:=nonshared
+ endef
+@@ -65,7 +65,7 @@ define Package/kernel/install
+ 	strings $(LINUX_DIR)/modules.builtin.modinfo | \
+ 		grep -E -v "\.(file$(if CONFIG_MODULE_STRIPPED,|parmtype))=" | \
+ 		tr '\n' '\0' > $(1)/$(MODULES_SUBDIR)/modules.builtin.modinfo
+-	echo $(LINUX_VERSION)~$(LINUX_VERMAGIC)-r$(LINUX_RELEASE) > $(STAGING_DIR)/kernel.version
++	echo $(LINUX_PACKAGE_VERSION)~$(LINUX_VERMAGIC)-r$(LINUX_RELEASE) > $(STAGING_DIR)/kernel.version
+ endef
+ 
+ define Package/kernel/extra_provides
+diff --git a/package/kernel/linux/modules/crypto.mk b/package/kernel/linux/modules/crypto.mk
+index 869601eb70..e39ceccd9b 100644
+--- a/package/kernel/linux/modules/crypto.mk
++++ b/package/kernel/linux/modules/crypto.mk
+@@ -155,8 +155,8 @@ define KernelPackage/crypto-crc32c
+   TITLE:=CRC32c CRC module
+   DEPENDS:=+kmod-crypto-hash
+   KCONFIG:=CONFIG_CRYPTO_CRC32C
+-  FILES:=$(LINUX_DIR)/crypto/crc32c_generic.ko
+-  AUTOLOAD:=$(call AutoLoad,04,crc32c_generic,1)
++  FILES:=$(LINUX_DIR)/crypto/$(if $(filter 7.3,$(KERNEL_PATCHVER)),crc32c-cryptoapi,crc32c_generic).ko
++  AUTOLOAD:=$(call AutoLoad,04,$(if $(filter 7.3,$(KERNEL_PATCHVER)),crc32c-cryptoapi,crc32c_generic),1)
+   $(call AddDepends/crypto)
+ endef
+ 
+diff --git a/package/kernel/linux/modules/lib.mk b/package/kernel/linux/modules/lib.mk
+index af445c84a1..64f8a6b5a9 100644
+--- a/package/kernel/linux/modules/lib.mk
++++ b/package/kernel/linux/modules/lib.mk
+@@ -85,10 +85,10 @@ $(eval $(call KernelPackage,lib-crc16))
+ define KernelPackage/lib-crc32c
+   SUBMENU:=$(LIB_MENU)
+   TITLE:=CRC32 support
+-  KCONFIG:=CONFIG_LIBCRC32C
+-  DEPENDS:=+kmod-crypto-crc32c
+-  FILES:=$(LINUX_DIR)/lib/libcrc32c.ko
+-  AUTOLOAD:=$(call AutoProbe,libcrc32c)
++  KCONFIG:=$(if $(filter 7.3,$(KERNEL_PATCHVER)),CONFIG_CRC32,CONFIG_LIBCRC32C)
++  DEPENDS:=$(if $(filter 7.3,$(KERNEL_PATCHVER)),,+kmod-crypto-crc32c)
++  FILES:=$(LINUX_DIR)/lib/$(if $(filter 7.3,$(KERNEL_PATCHVER)),crc/crc32,libcrc32c).ko
++  AUTOLOAD:=$(call AutoProbe,$(if $(filter 7.3,$(KERNEL_PATCHVER)),crc32,libcrc32c))
+ endef
+ 
+ define KernelPackage/lib-crc32c/description

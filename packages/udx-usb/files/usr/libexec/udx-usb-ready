@@ -1,0 +1,7 @@
+#!/bin/sh
+# Read current service state without reconfiguring or rebinding the gadget.
+. /usr/lib/udx-usb/gadget.sh
+g_ready_clock || exit 1
+G_READY_DEADLINE=$((G_NOW_CS + 200))
+G_READY_IP=$(uci -q get network.usbmgmt.ipaddr) || exit 1
+g_ready_once && g_ready_budget

@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+"""Prepare fixed OpenWrt sources, the SY108 target and standard feeds."""
+from pathlib import Path
+import argparse
+import hashlib
+import json
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'lib'))
+from workspace import PROJECT, OPENWRT, LINUX, IMAGE, docker, run
+
+
+def checkout(url, commit, destination):
+    if destination.exists():
+        subprocess.run(['git', '-C', str(destination), 'cat-file', '-e', commit + '^{commit}'], check=True)
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['git', 'init', str(destination)], check=True)
+    subprocess.run(['git', '-C', str(destination), 'remote', 'add', 'origin', url], check=True)
+    subprocess.run(['git', '-C', str(destination), 'fetch', '--depth=1', '--no-tags', 'origin', commit], check=True)
+    subprocess.run(['git', '-C', str(destination), 'checkout', '--detach', commit], check=True)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--linux-url', help='Optional Linux repository URL override')
+    p.add_argument('--openwrt-url', help='Optional OpenWrt mirror URL override')
+    p.add_argument('--skip-container', action='store_true')
+    a = p.parse_args()
+    kernel = json.loads((PROJECT / 'manifests/kernel.json').read_text())
+    linux_url = a.linux_url or kernel.get('repo')
+    if not LINUX.exists() and not linux_url:
+        p.error('Provide --linux-url or set SY108_LINUX to the Linux checkout')
+    checkout(linux_url, kernel['commit'], LINUX)
+    subprocess.run([sys.executable, str(PROJECT / 'tools/build/kernel-source.py')], check=True)
+    lock = json.loads((PROJECT / 'manifests/openwrt.json').read_text())
+    integration = PROJECT / 'integration/openwrt'
+    digest = hashlib.sha256()
+    for path in sorted(integration.rglob('*')):
+        if path.is_file():
+            digest.update(str(path.relative_to(integration)).encode() + b'\0' + path.read_bytes())
+    if not a.skip_container:
+        subprocess.run(
+            docker() + [
+                'build', '--platform', 'linux/arm64', '-t', IMAGE,
+                '-f', str(PROJECT / 'containers/Dockerfile'), str(PROJECT / 'containers'),
+            ],
+            check=True,
+        )
+    tree = OPENWRT
+    checkout(a.openwrt_url or lock['upstream'], lock['upstream_commit'], tree)
+    head = subprocess.check_output(['git', '-C', str(tree), 'rev-parse', 'HEAD'], text=True).strip()
+    if head != lock['upstream_commit']:
+        raise SystemExit(f'Expected OpenWrt {lock["upstream_commit"]}, found {head}: {tree}')
+    for name in (integration / 'series').read_text().splitlines():
+        if not name or name.startswith('#'):
+            continue
+        patch = integration / 'patches' / name
+        applied = subprocess.run(
+            ['git', '-C', str(tree), 'apply', '--reverse', '--check', str(patch)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode == 0
+        if not applied:
+            subprocess.run(['git', '-C', str(tree), 'apply', str(patch)], check=True)
+    shutil.copytree(integration / 'target/linux/sprd', tree / 'target/linux/sprd', dirs_exist_ok=True)
+    (tree / 'feeds.conf').write_text((integration / 'feeds.conf').read_text() + '\nsrc-link sy108 /project/packages\n')
+    subprocess.run([sys.executable, str(PROJECT / 'tools/build/kernel-source.py')], check=True)
+    run(['sh', '-c', 'test -e dl || ln -s /downloads dl; ./scripts/feeds update -a'])
+    for patch in sorted((integration / 'luci-patches').glob('*.patch')):
+        feed = tree / 'feeds/luci'
+        applied = subprocess.run(
+            ['git', '-C', str(feed), 'apply', '--reverse', '--check', str(patch)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode == 0
+        if not applied:
+            subprocess.run(['git', '-C', str(feed), 'apply', str(patch)], check=True)
+    run(['./scripts/feeds', 'install', '-a'])
+    expected = {
+        'upstream_commit': lock['upstream_commit'],
+        'integration_sha256': digest.hexdigest(),
+        'kernel_commit': kernel['commit'],
+    }
+    (tree / '.sy108-integration.json').write_text(json.dumps(expected, indent=2) + '\n')
+    print('Prepared fixed sources and feeds.')
+
+
+if __name__ == '__main__':
+    main()

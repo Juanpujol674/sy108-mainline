@@ -1,0 +1,32 @@
+diff --git a/package/system/procd/patches/990-sy108-signal-only-running-instance.patch b/package/system/procd/patches/990-sy108-signal-only-running-instance.patch
+new file mode 100644
+index 0000000000..4d53657a4d
+--- /dev/null
++++ b/package/system/procd/patches/990-sy108-signal-only-running-instance.patch
+@@ -0,0 +1,26 @@
++From: UDX710 project contributors
++Subject: [PATCH] service: do not signal an instance without a live child
++
++A never-started instance has a zeroed proc.pid, and an exited instance may
++retain its previous pid. The service.signal ubus handler must not turn
++these into a process-group signal or signal a stale/reused pid.
++
++Backport the live-child gate used by upstream commit
++ d0aed960fd45adae43e8d24f8c7139b9e381da97
++ ("instance, service: signal instances through a pidfd")
++without importing the newer pidfd lifecycle and unrelated instance changes.
++Also reject nonpositive pids defensively before kill(). Other signal/error
++semantics are unchanged.
++
++--- a/service/service.c
+++++ b/service/service.c
++@@ -585,6 +585,9 @@
++ static int
++ service_handle_kill(struct service_instance *in, int sig)
++ {
+++	if (!in->proc.pending || in->proc.pid <= 0)
+++		return UBUS_STATUS_NOT_FOUND;
+++
++ 	if (kill(in->proc.pid, sig) == 0)
++ 		return 0;
++ 

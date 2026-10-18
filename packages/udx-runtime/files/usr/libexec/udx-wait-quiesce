@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+[ "$(cat /etc/udx-openwrt-root 2>/dev/null)" = 'OpenWrt production root' ] || exit 64
+/usr/sbin/udx-runtime --quiesce || exit 1
+# Runtime enforces its independent CLOCK_BOOTTIME deadline of 330 seconds.
+tries=0
+while [ "$tries" -lt 335 ]; do
+	status=$(/usr/sbin/udx-runtime --status) || exit 1
+	case " $status " in
+		*' quiesce=ready '*) exit 0;;
+		*' quiesce=failed '*) printf '%s\n' "$status" >&2; exit 1;;
+	esac
+	tries=$((tries + 1))
+	sleep 1
+done
+echo 'Bounded system quiesce did not complete; refusing further shutdown/upgrade work' >&2
+exit 3

@@ -1,0 +1,27 @@
+{
+ "luci-app-udx": {
+  "description": "UDX710 device status and typed management",
+  "read": {
+   "ubus": {
+    "udx": [
+     "status",
+     "sms_status",
+     "apn_status",
+     "sms_history_status",
+     "sms_receipt"
+    ],
+    "system": [
+     "info"
+    ]
+   }
+  },
+  "write": {
+   "ubus": {
+    "udx": [
+     "cellular",
+     "usb"
+    ]
+   }
+  }
+ }
+}

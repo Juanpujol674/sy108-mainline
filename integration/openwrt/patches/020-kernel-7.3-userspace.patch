@@ -1,0 +1,43 @@
+diff --git a/package/devel/strace/Makefile b/package/devel/strace/Makefile
+index 36fcde8429..6838532087 100644
+--- a/package/devel/strace/Makefile
++++ b/package/devel/strace/Makefile
+@@ -74,6 +74,12 @@ CONFIGURE_ARGS += \
+ 	--enable-mpers=no \
+ 	--without-libselinux
+ 
++# Keep strace's decoders and their UAPI structures from the same release.
++# Linux 7.3 repurposes io_uring_buf_reg reserved fields unknown to strace 6.17.
++ifeq ($(KERNEL_PATCHVER),7.3)
++CONFIGURE_ARGS += --enable-bundled=yes
++endif
++
+ MAKE_FLAGS := \
+ 	CCOPT="$(TARGET_CFLAGS)"
+ 
+diff --git a/package/libs/libbpf/patches/010-linux-128-bit-types.patch b/package/libs/libbpf/patches/010-linux-128-bit-types.patch
+new file mode 100644
+index 0000000000..9d9d48accd
+--- /dev/null
++++ b/package/libs/libbpf/patches/010-linux-128-bit-types.patch
+@@ -0,0 +1,20 @@
++From: SY108 maintainers
++Subject: [PATCH] include: provide Linux 128-bit UAPI integer types
++
++Linux 7.3 arm64 ptrace UAPI uses __u128. libbpf's private linux/types.h
++shadows the exported kernel header, so carry the same definitions here.
++
++--- a/include/linux/types.h
+++++ b/include/linux/types.h
++@@ -12,6 +12,11 @@
++ #include <asm/types.h>
++ #include <asm/posix_types.h>
++ 
+++#ifdef __SIZEOF_INT128__
+++typedef __signed__ __int128 __s128 __attribute__((aligned(16)));
+++typedef unsigned __int128 __u128 __attribute__((aligned(16)));
+++#endif
+++
++ #define __bitwise__
++ #define __bitwise __bitwise__
++ 

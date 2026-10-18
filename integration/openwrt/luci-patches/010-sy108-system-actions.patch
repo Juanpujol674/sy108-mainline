@@ -1,0 +1,186 @@
+--- a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/flash.js
++++ b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/flash.js
+@@ -5,6 +5,7 @@
+ 'require rpc';
+ 'require fs';
+ 'require ui';
++'require sy108.system as sy108';
+ 
+ const isReadonlyView = !L.hasViewPermission();
+ 
+@@ -90,18 +91,8 @@
+ 		form.parentNode.removeChild(form);
+ 	},
+ 
+-	handleFirstboot(ev) {
+-		if (!confirm(_('Do you really want to erase all settings?')))
+-			return;
+-
+-		ui.showModal(_('Erasing...'), [
+-			E('p', { 'class': 'spinning' }, _('The system is erasing the configuration partition now and will reboot itself when finished.'))
+-		]);
+-
+-		/* Currently the sysupgrade rpc call will not return, hence no promise handling */
+-		fs.exec('/sbin/firstboot', [ '-r', '-y' ]);
+-
+-		ui.awaitReconnect('192.168.1.1', 'openwrt.lan');
++	handleFirstboot(ev){
++		return sy108.handleFirstboot(ev);
+ 	},
+ 
+ 	handleRestore(ev) {
+@@ -139,34 +130,8 @@
+ 			}, this, ev.target));
+ 	},
+ 
+-	handleRestoreConfirm(btn, ev) {
+-		return fs.exec('/sbin/sysupgrade', [ '--restore-backup', '/tmp/backup.tar.gz' ])
+-			.then(L.bind(function(btn, res) {
+-				if (res.code != 0) {
+-					ui.addNotification(null, [
+-						E('p', _('The restore command failed with code %d').format(res.code)),
+-						res.stderr ? E('pre', {}, [ res.stderr ]) : ''
+-					]);
+-					L.raise('Error', 'Unpack failed');
+-				}
+-
+-				btn.firstChild.data = _('Rebooting…');
+-				return fs.exec('/sbin/reboot');
+-			}, this, ev.target))
+-			.then(L.bind(function(res) {
+-				if (res.code != 0) {
+-					ui.addNotification(null, E('p', _('The reboot command failed with code %d').format(res.code)));
+-					L.raise('Error', 'Reboot failed');
+-				}
+-
+-				ui.showModal(_('Rebooting…'), [
+-					E('p', { 'class': 'spinning' }, _('The system is rebooting now. If the restored configuration changed the current LAN IP address, you might need to reconnect manually.'))
+-				]);
+-
+-				ui.awaitReconnect(window.location.host, '192.168.1.1', 'openwrt.lan');
+-			}, this))
+-			.catch(function(e) { ui.addNotification(null, E('p', e.message)) })
+-			.finally(function() { btn.firstChild.data = _('Upload archive...') });
++	handleRestoreConfirm(btn, ev){
++		return sy108.handleRestoreConfirm(btn, ev);
+ 	},
+ 
+ 	handleBlock(hostname, ev) {
+@@ -278,6 +243,9 @@
+ 					])));
+ 				};
+ 
++				if (!is_valid || is_too_big || res[2].code != 0)
++					cntbtn.disabled = true;
++
+ 				if ((!is_valid || is_too_big || res[2].code != 0) && is_forceable) {
+ 					body.push(E('p', {}, E('label', { 'class': 'btn alert-message danger' }, [
+ 						opts.force[0], ' ', _('Force upgrade'),
+@@ -298,7 +266,7 @@
+ 				]));
+ 
+ 				opts.force[0].addEventListener('change', function(ev) {
+-					cntbtn.disabled = !ev.target.checked;
++					cntbtn.disabled = !ev.target.checked || !is_forceable;
+ 				});
+ 
+ 				opts.keep[0].addEventListener('change', function(ev) {
+@@ -315,29 +283,8 @@
+ 			}, this, ev.target));
+ 	},
+ 
+-	handleSysupgradeConfirm(btn, opts, ev) {
+-		btn.firstChild.data = _('Flashing…');
+-
+-		ui.showModal(_('Flashing…'), [
+-			E('p', { 'class': 'spinning' }, _('The system is flashing now.<br /> DO NOT POWER OFF THE DEVICE!<br /> Wait a few minutes before you try to reconnect. It might be necessary to renew the address of your computer to reach the device again, depending on your settings.'))
+-		]);
+-
+-		const args = [];
+-
+-		for (let key in opts)
+-			/* if checkbox == condition add args to sysupgrade */
+-			if (opts[key][0].checked == opts[key][1])
+-				args.push(opts[key][2]);
+-
+-		args.push('/tmp/firmware.bin');
+-
+-		/* Currently the sysupgrade rpc call will not return, hence no promise handling */
+-		fs.exec('/sbin/sysupgrade', args);
+-
+-		if (opts['keep'][0].checked)
+-			ui.awaitReconnect(window.location.host);
+-		else
+-			ui.awaitReconnect('192.168.1.1', 'openwrt.lan');
++	handleSysupgradeConfirm(btn, opts, ev){
++		return sy108.handleSysupgradeConfirm(btn, opts, ev);
+ 	},
+ 
+ 	handleBackupList(ev) {
+--- a/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
++++ b/modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js
+@@ -1,18 +1,15 @@
+ 'use strict';
+ 'require view';
+-'require rpc';
++'require sy108.system as sy108';
+ 'require ui';
+ 'require uci';
+ 
+-var callReboot = rpc.declare({
+-	object: 'system',
+-	method: 'reboot',
+-	expect: { result: 0 }
+-});
+-
+ return view.extend({
+ 	load: function() {
+-		return uci.changes();
++		return sy108.isRecovery().then(L.bind(function(recovery) {
++			this.recovery = recovery;
++			return uci.changes();
++		}, this));
+ 	},
+ 
+ 	render: function(changes) {
+@@ -33,31 +30,19 @@
+ 			'click': ui.createHandlerFn(this, 'handleReboot')
+ 		}, _('Perform reboot')));
+ 
++		body.appendChild(E('button', {
++			'class': 'cbi-button cbi-button-action',
++			'click': ui.createHandlerFn(this, function() {
++				return sy108.reboot(this.recovery ? 'openwrt' : 'recovery');
++			})
++		}, this.recovery ? _('Reboot into main system') : _('Reboot into Recovery')));
+ 		return body;
+ 	},
+ 
+-	handleReboot: function(ev) {
+-		return callReboot().then(function(res) {
+-			if (res != 0) {
+-				L.ui.addNotification(null, E('p', _('The reboot command failed with code %d').format(res)));
+-				L.raise('Error', 'Reboot failed');
+-			}
++	handleReboot: function() {
++		return sy108.reboot(this.recovery ? 'recovery' : 'openwrt');
++	},
+ 
+-			L.ui.showModal(_('Rebooting…'), [
+-				E('p', { 'class': 'spinning' }, _('Waiting for device...'))
+-			]);
+-
+-			window.setTimeout(function() {
+-				L.ui.showModal(_('Rebooting…'), [
+-					E('p', { 'class': 'spinning alert-message warning' },
+-						_('Device unreachable! Still waiting for device...'))
+-				]);
+-			}, 150000);
+-
+-			L.ui.awaitReconnect();
+-		})
+-		.catch(function(e) { L.ui.addNotification(null, E('p', e.message)) });
+-	},
+ 
+ 	handleSaveApply: null,
+ 	handleSave: null,
