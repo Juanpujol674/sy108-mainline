@@ -36,7 +36,7 @@ U-Boot 与 SPL 在 `sy108-uboot-spl` 仓库中独立构建，详见 [构建维�
 
 ## 功能概述
 
-- **Web 管理（LuCI）**：UDX710 菜单提供设备状态监控、蜂窝网络管理（运营商扫描与选网、NR/LTE 频段/频点/小区锁定、APN 模板、IMS/VoLTE）、短信收发、硬件与 CPU/DDR 调频管理、AT 命令终端与 IMEI 管理，以及主系统/Recovery 启动目标切换。
+- **Web 管理（LuCI）**：SY108 菜单提供设备状态监控、蜂窝网络管理（运营商扫描与选网、NR/LTE 频段/频点/小区锁定、APN 模板、IMS/VoLTE）、短信收发、硬件监测、CPU 调频与 DDR 频率监测、AT 命令终端与 IMEI 管理；系统维护页面提供主系统/Recovery 启动目标切换。
 - **蜂窝数据平面**：基于原生 `netifd` 协议扩展与官方 DHCPv6 客户端管理 IPv4/IPv6 WAN 接入。
 - **USB 网络管理**：主系统与 Recovery 均在 USB1（`0x29100000`）上提供 CDC-NCM 管理网口（默认管理地址 `192.168.66.1/24`，初始登录凭据 `root` / `admin`）。主系统默认启用 PAM U3 硬件加速，Recovery 使用软件 NCM。
 
@@ -46,13 +46,13 @@ U-Boot 与 SPL 在 `sy108-uboot-spl` 仓库中独立构建，详见 [构建维�
   - 粗略优化了 USB DWC3 的 PAM U3 硬件卸载加速。
   - USB 3.0 SuperSpeed 链路偶发不稳，目前尚不确定是测试线材/转接头问题还是 PHY/链路参数仍需微调。
   - USB 网络目前仅做了 CDC-NCM 支持；RNDIS 与 CDC-ECM 因个人无使用需求暂未适配。
-  - USB Host 模式暂未测试。
+  - 当前配置只启用 USB Device，USB Host 不属于交付范围。
 - **蜂窝与基带功能**：
   - 目前仅使用中国联通 SIM 卡完成基础测试，其余运营商尚未实测。
-  - 基带独立软复位与 SIM 卡热插拔重识别目前尚存在问题，待后续排查解决（前端基带复位按钮暂置灰保留）。
+  - 不提供基带独立热复位；SIM 卡热插拔重识别尚未完成，现有复位控件不可用。
   - 运营商扫描/手动选网、NR/LTE 频段与频点/小区锁定、IMS/VoLTE 及 IMEI 修改等基带高级功能仅完成代码接入与基础验证，完整实网测试尚待进行。
   - 受限于测试环境信号较弱，尚未开展极限蜂窝吞吐性能测试。
-  - 语音 DSP（AGDSP / 语音通路）仍有问题，待后续调试。
+  - 语音 DSP／PCM 实验已暂停归档，当前固件不启用该通路。
 - **Web 管理前端（LuCI）**：
   - 当前前端虽已切换至原生 LuCI 表单框架，但各页面的功能划分、状态联动与交互逻辑仍较为杂乱，待后续重新梳理与优化。
 - **外设与多机型支持**：
@@ -66,7 +66,8 @@ U-Boot 与 SPL 在 `sy108-uboot-spl` 仓库中独立构建，详见 [构建维�
 
 - [架构与接口](docs/architecture.md)
 - [构建维护](docs/build.md)
-- [USB、MCU 与 CC/PD 硬件参考](docs/usb-mcu-cc-findings.md)
+- [设备树与启动 ABI](docs/devicetree.md)
+- [USB 与 MCU 接口](docs/usb-mcu.md)
 
 ## 致谢
 
@@ -75,8 +76,3 @@ U-Boot 与 SPL 在 `sy108-uboot-spl` 仓库中独立构建，详见 [构建维�
 - [TheGammaSqueeze/UnisocBypass](https://github.com/TheGammaSqueeze/UnisocBypass) & [LeoChen-CoreMind/spd_flasher](https://github.com/leochen-coremind/spd_flasher) — 紫光展锐安全启动绕过、DHTB 签名结构分析与 BootROM 自动刷机恢复工具
 - [sprd-linux/ud710_bsp](https://github.com/sprd-linux/ud710_bsp) — 紫光展锐 UDX710 开源 BSP 参考基线
 - [OpenWrt](https://openwrt.org/)、[The Linux Kernel](https://www.kernel.org/) 与 [Das U-Boot](https://docs.u-boot.org/) 开源社区
-
----
-
-*Powered by GPT 6 Astra & Gemini 4 Argon*
-

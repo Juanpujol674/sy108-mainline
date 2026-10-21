@@ -70,15 +70,6 @@ def main():
     (tree / 'feeds.conf').write_text((integration / 'feeds.conf').read_text() + '\nsrc-link sy108 /project/packages\n')
     subprocess.run([sys.executable, str(PROJECT / 'tools/build/kernel-source.py')], check=True)
     run(['sh', '-c', 'test -e dl || ln -s /downloads dl; ./scripts/feeds update -a'])
-    for patch in sorted((integration / 'luci-patches').glob('*.patch')):
-        feed = tree / 'feeds/luci'
-        applied = subprocess.run(
-            ['git', '-C', str(feed), 'apply', '--reverse', '--check', str(patch)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ).returncode == 0
-        if not applied:
-            subprocess.run(['git', '-C', str(feed), 'apply', str(patch)], check=True)
     run(['./scripts/feeds', 'install', '-a'])
     expected = {
         'upstream_commit': lock['upstream_commit'],

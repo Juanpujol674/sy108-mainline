@@ -68,6 +68,28 @@ def fdt_props(data):
     raise ValueError("missing FDT end")
 
 
+def boot_abi(nodes, target):
+    """Validate the six retained properties of the installed SY108 boot ABI."""
+    if target not in ("openwrt", "recovery"):
+        raise ValueError("Unknown boot target")
+    chosen = nodes.get("/chosen", {})
+    strings = {"udx,boot-policy": "openwrt-v1", "udx,boot-target": target}
+    for name, value in strings.items():
+        if chosen.get(name) != (value + "\0").encode():
+            raise ValueError("Invalid boot ABI string: " + name)
+    if chosen.get("udx,trial-stage-schema") != struct.pack(">I", 6):
+        raise ValueError("Invalid RTC stage schema")
+    for name in ("udx,trial-rtc-stages", "udx,trial-local-lease"):
+        if chosen.get(name) != b"":
+            raise ValueError("Missing or non-boolean boot flag: " + name)
+    recovery = chosen.get("udx,recovery-ram")
+    if (target == "recovery" and recovery != b"") or (target == "openwrt" and recovery is not None):
+        raise ValueError("Recovery RAM flag does not match the boot target")
+    return {"boot_policy": "openwrt-v1", "boot_target": target,
+            "trial_stage_schema": 6, "trial_rtc_stages": True,
+            "trial_local_lease": True, "recovery_ram": target == "recovery"}
+
+
 def dt_region(dtb):
     fdt_props(dtb)
     padded = align(len(dtb))
