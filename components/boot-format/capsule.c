@@ -3,18 +3,22 @@
  * Rejects oversized headers before accessing payloads or inflating data.
  */
 #include "capsule.h"
+
 static uint32_t le32(const unsigned char *p)
 {
 	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
+
 static uint32_t be32(const unsigned char *p)
 {
 	return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
 }
+
 static uint64_t le64(const unsigned char *p)
 {
 	return le32(p) | ((uint64_t)le32(p + 4) << 32);
 }
+
 static int bytes(const unsigned char *p, const char *s, unsigned n)
 {
 	for (unsigned i = 0; i < n; i++)
@@ -22,10 +26,12 @@ static int bytes(const unsigned char *p, const char *s, unsigned n)
 			return 0;
 	return 1;
 }
+
 static uint32_t align(uint32_t n)
 {
 	return (n + 2047u) & ~2047u;
 }
+
 int udx_boot_parts(const void *data, size_t size, unsigned target, struct udx_boot_parts *out)
 {
 	const unsigned char *p = data;

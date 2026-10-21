@@ -9,9 +9,15 @@ case "${1:-status}" in
 		g_load_config || exit 1
 		PROFILE=$2
 		case "${3:-keep}" in keep) ;; acm) ACM=1;; no-acm) ACM=0;; *) exit 64;; esac
-		g_lock && g_preflight || exit $?
+		g_profile && g_lock || exit $?
 		request="switch $PROFILE $ACM"
 		command="[\"/usr/libexec/udx-usb-gadget\",\"apply\",\"switch\",\"$PROFILE\",\"$ACM\"]"
+		;;
+	reset)
+		[ "$#" = 1 ] || exit 64
+		g_lock || exit $?
+		request=reset
+		command='["/usr/libexec/udx-usb-gadget","apply","reset"]'
 		;;
 	stop)
 		g_lock || exit $?
@@ -26,9 +32,13 @@ case "${1:-status}" in
 		exit 0
 		;;
 	*)
-		echo 'usage: udx-usbctl status | start | switch {ncm|ncm-software} [acm|no-acm] | stop | cancel-pending' >&2
+		echo 'usage: udx-usbctl status | start | switch {ncm|ncm-software} [acm|no-acm] | reset | stop | cancel-pending' >&2
 		exit 64;;
 esac
+if [ "$request" = reset ] && [ -f "$UDX_RUN/pending" ] && [ "$(g_read "$UDX_RUN/pending")" = reset ]; then
+	echo "queued=reset"
+	exit 0
+fi
 [ ! -e "$UDX_RUN/pending" ] || { g_error 'a request is queued; inspect status or cancel-pending'; exit 75; }
 printf '%s\n' "$request" > "$UDX_RUN/pending" || exit 1
 # procd owns the operation independently of the SSH/ACM connection it changes.
@@ -41,4 +51,4 @@ if ! ubus call service add "{\"name\":\"udx-usb-apply\",\"instances\":{\"apply\"
 	exit 1
 fi
 echo "queued=$request"
-echo 'Changing NCM processing mode restarts the device; other USB changes reconnect it. Check udx-usbctl status after reconnection.'
+[ "$request" = reset ] || echo 'Changing NCM processing mode restarts the device; other USB changes reconnect it. Check udx-usbctl status after reconnection.'

@@ -42,7 +42,7 @@ platform_prepare_upgrade() {
 
 platform_quiesce_usb() {
 	local gadget=/sys/kernel/config/usb_gadget/udx-usb/UDC
-	local udc=/sys/class/udc/29100000.dwc3
+	local udc=/sys/class/udc/29100000.usb
 	local pam=/sys/bus/platform/devices/2b300000.pamu3/offload_state
 	local bound state
 	# RAM stage2 has already taken over; losing the management link here is
@@ -51,7 +51,7 @@ platform_quiesce_usb() {
 	if [ -f "$gadget" ]; then
 		read -r bound < "$gadget" || return 1
 		case "$bound" in
-			29100000.dwc3) printf '\n' > "$gadget" || return 1 ;;
+			29100000.usb) printf '\n' > "$gadget" || return 1 ;;
 			'') ;;
 			*)
 				echo 'Unexpected USB gadget controller' >&2

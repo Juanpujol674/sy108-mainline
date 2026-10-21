@@ -1,6 +1,6 @@
 # UDX USB 管理包（`udx-usb`）
 
-`udx-usb` 在 `29100000.dwc3`（USB1）上提供 CDC-NCM 网络管理接口与可选的受认证 ACM 串口终端：
+`udx-usb` 在 `29100000.usb`（USB1）上提供 CDC-NCM 网络管理接口与可选的受认证 ACM 串口终端：
 - 主系统默认启用 **PAM U3 硬件加速模式（`ncm`）**，支持切换至软件处理模式（`ncm-software`）用于对比诊断；
 - 独立 Recovery 默认使用软件模式（`ncm-software`）；
 - 包含 Microsoft OS 1.0 `WINNCM` 兼容描述符，支持 Windows 11、macOS 与 Linux 免驱枚举。
@@ -11,6 +11,7 @@
 - `/etc/init.d/udx-usb`：`procd` 服务入口，负责启动时配置 configfs Gadget 并托管 ACM `agetty` 进程。
 - `/usr/sbin/udx-usbctl`：本地维护命令行工具，支持查询状态与切换 USB 模式。
 - `/usr/libexec/udx-usb-gadget`：configfs Gadget 事务脚本。
+- `/usr/libexec/udx-usb-ready`：调用 `udx-boot-state management-ready` 的当前管理链路检查；启动确认使用同一实现。gadget 绑定不等待 logd/DHCP，状态不读取早期超时缓存。
 - `/usr/libexec/udx-usb-console` / `udx-usb-login`：ACM 串口 `agetty` 包装与密码认证登录入口（要求系统已设置非空 `root` 密码）。
 - `/etc/uci-defaults/90-udx-usb`：初始化 `usbmgmt`（`br-usb`，默认 `192.168.66.1/24`）网桥、DHCP 与防火墙规则。
 

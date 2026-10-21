@@ -22,9 +22,11 @@
 #define UDX_ROOT_MOUNTINFO "/proc/self/mountinfo"
 #endif
 #define UDX_UBIFS_MAGIC 0x24051905
+
 struct udx_root_layout {
 	unsigned ubi, mtd, rootfs, data;
 };
+
 struct udx_root_mount {
 	unsigned major, minor, count;
 	char options[256], type[32], source[256];
@@ -47,6 +49,7 @@ static int udx_root_read(const char *path, char *text, size_t size)
 		text[n - 1] = 0;
 	return 0;
 }
+
 static int udx_root_discover(struct udx_root_layout *layout)
 {
 	glob_t devices = {0}, volumes = {0};
@@ -124,6 +127,7 @@ static int udx_root_discover(struct udx_root_layout *layout)
 		return -errno;
 	return 0;
 }
+
 static int udx_root_option(const char *options, const char *wanted)
 {
 	size_t length = strlen(wanted);
@@ -138,6 +142,7 @@ static int udx_root_option(const char *options, const char *wanted)
 	}
 	return 0;
 }
+
 static int udx_root_mounts(struct udx_root_mount mounts[3])
 {
 	FILE *file = fopen(UDX_ROOT_MOUNTINFO, "re");
@@ -177,6 +182,7 @@ static int udx_root_mounts(struct udx_root_mount mounts[3])
 	fclose(file);
 	return ret;
 }
+
 static int udx_root_fs(const char *path, long magic, int readonly)
 {
 	struct statfs fs;
@@ -187,6 +193,7 @@ static int udx_root_fs(const char *path, long magic, int readonly)
 		return -EROFS;
 	return 0;
 }
+
 static int udx_root_check(int preinit, int require_procd, struct udx_root_layout *layout)
 {
 	struct udx_root_mount mounts[3] = {0};

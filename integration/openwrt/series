@@ -3,3 +3,5 @@
 020-kernel-7.3-userspace.patch
 030-procd-child-lifecycle.patch
 040-sysupgrade-prepare-hook.patch
+050-dnsmasq-jail-pidfile.patch
+060-procd-jail-status.patch

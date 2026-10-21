@@ -3,8 +3,8 @@ SY108_RECIPE_DIR := $(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 include $(TOPDIR)/rules.mk
 PKG_NAME:=luci-app-sy108-system
 PKG_VERSION:=4.0
-PKG_RELEASE:=1
-PKG_LICENSE:=GPL-2.0-only
+PKG_RELEASE:=2
+PKG_LICENSE:=GPL-2.0-only Apache-2.0
 PKGARCH:=all
 PKG_BUILD_DEPENDS:=luci-base/host
 SY108_SOURCE_PATHS := packages/luci-app-sy108-system
@@ -17,7 +17,7 @@ define Package/luci-app-sy108-system
   SECTION:=luci
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
-  TITLE:=SY108 actions for standard LuCI system pages
+  TITLE:=SY108 system maintenance
   DEPENDS:=+udx-upgrade +luci-base +luci-mod-system +luci-i18n-base-zh-cn
 endef
 

@@ -16,7 +16,7 @@ define Package/udx-runtime
   SECTION:=base
   CATEGORY:=Base system
   TITLE:=SY108 boot, shutdown and recovery coordinator
-  DEPENDS:=+procd +ubus +ubi-utils +flock +udx-usb +ucode +ucode-mod-fs
+  DEPENDS:=+kmod-udx710-pmsys +procd +ubus +libubus +libubox +ubi-utils +flock +udx-usb +ucode +ucode-mod-fs
 endef
 
 define Package/udx-runtime/config
@@ -27,7 +27,7 @@ endef
 
 define Build/Compile
 	$(TARGET_CC) $(TARGET_CPPFLAGS) $(TARGET_CFLAGS) -std=gnu11 -Wall -Wextra \
-	 $(PKG_BUILD_DIR)/components/system/runtime.c $(TARGET_LDFLAGS) -o $(PKG_BUILD_DIR)/udx-runtime
+	 $(PKG_BUILD_DIR)/components/system/runtime.c $(TARGET_LDFLAGS) -lubus -lubox -o $(PKG_BUILD_DIR)/udx-runtime
 	$(TARGET_CC) $(TARGET_CPPFLAGS) $(TARGET_CFLAGS) -std=gnu11 \
 	 $(PKG_BUILD_DIR)/components/system/verify-ubi-root.c $(TARGET_LDFLAGS) -o $(PKG_BUILD_DIR)/udx-verify-root
 endef
@@ -47,6 +47,8 @@ define Package/udx-runtime/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/udx-runtime $(1)/usr/sbin/
 	$(INSTALL_DIR) $(1)/usr/libexec
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/packages/udx-runtime/files/usr/libexec/sy108-system $(1)/usr/libexec/
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/serial
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/packages/udx-runtime/files/etc/hotplug.d/serial/90-sy108-mcu $(1)/etc/hotplug.d/serial/
 	$(INSTALL_DIR) $(1)/lib/preinit
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/packages/udx-runtime/recovery/preinit $(1)/lib/preinit/05_sy108-recovery
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/packages/udx-runtime/files/etc/init.d/udx-runtime $(1)/etc/init.d/udx-runtime

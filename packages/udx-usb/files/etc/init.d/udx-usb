@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034
 START=50
 # shellcheck disable=SC2034
-STOP=10
+STOP=20
 # shellcheck disable=SC2034
 USE_PROCD=1
 

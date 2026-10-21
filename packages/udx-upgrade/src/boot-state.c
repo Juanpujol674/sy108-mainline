@@ -7,7 +7,9 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
-#include <sys/un.h>
+#include <libubus.h>
+#include <libubox/blobmsg.h>
+#include "management-ready.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <time.h>
@@ -26,11 +28,13 @@
 #include <sys/sysmacros.h>
 #include <sys/vfs.h>
 #include <unistd.h>
+
 struct volume {
 	int fd;
 	char sys[256], node[320];
 	size_t capacity;
 };
+
 static int text(const char *p, char *b, size_t n)
 {
 	int fd = open(p, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -43,6 +47,7 @@ static int text(const char *p, char *b, size_t n)
 	b[r] = 0;
 	return 0;
 }
+
 static int property(const char *path, const char *expected)
 {
 	char b[128];
@@ -53,6 +58,7 @@ static int property(const char *path, const char *expected)
 	close(fd);
 	return n == (ssize_t)strlen(expected) + 1 && !memcmp(b, expected, n) ? 0 : -1;
 }
+
 static int number(const char *base, const char *name, unsigned long *v)
 {
 	char p[320], b[64], *e;
@@ -63,6 +69,7 @@ static int number(const char *base, const char *name, unsigned long *v)
 	*v = strtoul(b, &e, 10);
 	return errno || strcmp(e, "\n") ? -1 : 0;
 }
+
 static int find_volume(const char *name, unsigned lebs, struct volume *out)
 {
 	glob_t g = {0};
@@ -129,6 +136,7 @@ static int find_volume(const char *name, unsigned lebs, struct volume *out)
 	out->capacity = n * l;
 	return 0;
 }
+
 int misc_edit(unsigned char *data, size_t size, const char *state)
 {
 	if (size != MISC_BYTES ||
@@ -188,6 +196,7 @@ int misc_edit(unsigned char *data, size_t size, const char *state)
 	free(out);
 	return 0;
 }
+
 static int readall(int fd, void *data, size_t n)
 {
 	unsigned char *p = data;
@@ -202,6 +211,7 @@ static int readall(int fd, void *data, size_t n)
 	}
 	return 0;
 }
+
 static int update(struct volume *v, const void *data, size_t size)
 {
 	if (size > v->capacity)
@@ -225,6 +235,7 @@ static int update(struct volume *v, const void *data, size_t size)
 		return -1;
 	return 0;
 }
+
 static int boot_id(char value[40])
 {
 	if (text("/proc/sys/kernel/random/boot_id", value, 40) || strlen(value) != 37 ||
@@ -239,50 +250,69 @@ static int boot_id(char value[40])
 			return -1;
 	return 0;
 }
+
+struct runtime_readiness {
+	const char *boot;
+	int ready;
+};
+
+static void runtime_reply(struct ubus_request *request, int type, struct blob_attr *message)
+{
+	enum { BOOT, OWNER, CORE, ERROR, RENEWALS, LAST, CLOSING, ROOT, QUIESCE, QERROR, N };
+	static const struct blobmsg_policy policy[N] = {
+	    [BOOT] = {.name = "boot_id", .type = BLOBMSG_TYPE_STRING},
+	    [OWNER] = {.name = "owner", .type = BLOBMSG_TYPE_INT32},
+	    [CORE] = {.name = "core", .type = BLOBMSG_TYPE_STRING},
+	    [ERROR] = {.name = "core_error", .type = BLOBMSG_TYPE_INT32},
+	    [RENEWALS] = {.name = "renewals", .type = BLOBMSG_TYPE_INT32},
+	    [LAST] = {.name = "last_renew_ms", .type = BLOBMSG_TYPE_INT64},
+	    [CLOSING] = {.name = "closing", .type = BLOBMSG_TYPE_BOOL},
+	    [ROOT] = {.name = "root", .type = BLOBMSG_TYPE_STRING},
+	    [QUIESCE] = {.name = "quiesce", .type = BLOBMSG_TYPE_STRING},
+	    [QERROR] = {.name = "quiesce_error", .type = BLOBMSG_TYPE_INT32},
+	};
+	struct runtime_readiness *s = request->priv;
+	struct blob_attr *tb[N];
+	struct timespec now;
+	(void)type;
+	if (!message)
+		return;
+	blobmsg_parse(policy, N, tb, blob_data(message), blob_len(message));
+	for (unsigned i = 0; i < N; i++)
+		if (!tb[i])
+			return;
+	if (strcmp(blobmsg_get_string(tb[BOOT]), s->boot) || blobmsg_get_u32(tb[OWNER]) <= 1 ||
+	    strcmp(blobmsg_get_string(tb[CORE]), "ready") || blobmsg_get_u32(tb[ERROR]) ||
+	    blobmsg_get_bool(tb[CLOSING]) || blobmsg_get_u32(tb[RENEWALS]) < 2 ||
+	    strcmp(blobmsg_get_string(tb[ROOT]), "overlay") ||
+	    strcmp(blobmsg_get_string(tb[QUIESCE]), "idle") || blobmsg_get_u32(tb[QERROR]) ||
+	    clock_gettime(CLOCK_BOOTTIME, &now))
+		return;
+	uint64_t milliseconds = (uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+	uint64_t last = blobmsg_get_u64(tb[LAST]);
+	s->ready = last <= milliseconds && milliseconds - last <= 25000;
+}
+
 static int live_runtime(const char *boot)
 {
-	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-	struct sockaddr_un address = {.sun_family = AF_UNIX};
-	strcpy(address.sun_path, "/run/udx-runtime.sock");
-	int result = -1;
-	if (fd < 0)
-		return -1;
-	if (connect(fd, (void *)&address, sizeof(address)))
-		goto out;
-	if (send(fd, "status\n", 7, MSG_NOSIGNAL) != 7)
-		goto out;
-	struct pollfd wait = {.fd = fd, .events = POLLIN};
-	if (poll(&wait, 1, 1000) != 1)
-		goto out;
-	char reply[512], current[64], core[16], baseband[16];
-	long owner;
-	int error, cp_error, closing;
-	unsigned renewals;
-	unsigned long long last;
-	ssize_t n = recv(fd, reply, sizeof(reply) - 1, MSG_TRUNC);
-	if (n <= 0 || n >= (ssize_t)sizeof(reply))
-		goto out;
-	reply[n] = 0;
-	if (sscanf(reply,
-		   "RUNTIME_STATUS1 boot=%63s owner=%ld core=%15s core_error=%d baseband=%15s "
-		   "cpnv_error=%d renewals=%u last_renew_ms=%llu closing=%d",
-		   current, &owner, core, &error, baseband, &cp_error, &renewals, &last,
-		   &closing) != 9 ||
-	    strcmp(current, boot) || owner <= 1 || strcmp(core, "ready") || error || closing ||
-	    renewals < 2 || !strstr(reply, " root=overlay quiesce=idle quiesce_error=0\n"))
-		goto out;
-	struct timespec now;
-	if (clock_gettime(CLOCK_BOOTTIME, &now))
-		goto out;
-	unsigned long long milliseconds =
-	    (unsigned long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
-	if (last > milliseconds || milliseconds - last > 25000)
-		goto out;
-	result = 0;
-out:
-	close(fd);
-	return result;
+	struct runtime_readiness state = {.boot = boot};
+	struct ubus_context *ctx;
+	uint32_t id;
+	int ret = -1;
+	/* Object lookup itself is synchronous and has no timeout argument. */
+	alarm(2);
+	ctx = ubus_connect(NULL);
+	if (ctx) {
+		if (!ubus_lookup_id(ctx, "udx.runtime", &id) &&
+		    !ubus_invoke(ctx, id, "status", NULL, runtime_reply, &state, 1000) &&
+		    state.ready)
+			ret = 0;
+		ubus_free(ctx);
+	}
+	alarm(0);
+	return ret;
 }
+
 static int management_listener(unsigned port)
 {
 	int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
@@ -304,16 +334,17 @@ static int management_listener(unsigned port)
 	close(fd);
 	return result;
 }
+
 static int management_network_ready(void)
 {
-	/* Reuse the USB package's live netifd/dnsmasq checks. The prebind report
-	 * describes an earlier startup instant and may legitimately time out. */
+	/* The same bounded helper serves boot acceptance and live USB status. */
 	pid_t child = fork();
 	if (child < 0)
 		return -1;
 	if (!child) {
 		setpgid(0, 0);
-		execl("/usr/libexec/udx-usb-ready", "udx-usb-ready", (char *)0);
+		execl("/usr/libexec/udx-boot-state", "udx-boot-state", "management-ready",
+		      (char *)0);
 		_exit(127);
 	}
 	setpgid(child, child);
@@ -332,20 +363,21 @@ static int management_network_ready(void)
 	}
 	return -1;
 }
+
 static int boot_management_ready(void)
 {
 	char value[512];
 	/* Logical gadget readiness is independent of a connected host or SIM.
 	 * All run files are from this boot; require the live UDC binding too. */
 	if (text("/sys/kernel/config/usb_gadget/udx-usb/UDC", value, sizeof(value)) ||
-	    strcmp(value, "29100000.dwc3\n") ||
-	    text("/run/udx-usb/applied", value, sizeof(value)) ||
+	    strcmp(value, "29100000.usb\n") || text("/run/udx-usb/applied", value, sizeof(value)) ||
 	    (strncmp(value, "profile=ncm\n", 12) && strncmp(value, "profile=ncm-software\n", 21)) ||
 	    management_listener(22) || (management_listener(80) && management_listener(443)) ||
 	    management_network_ready())
 		return -1;
 	return 0;
 }
+
 static int boot_accept(char *why, size_t cap)
 {
 	struct volume misc = {.fd = -1};
@@ -403,6 +435,12 @@ int main(int argc, char **argv)
 {
 	if (getuid() || argc != 2)
 		return 64;
+	if (!strcmp(argv[1], "management-ready")) {
+		const char *reason;
+		int ret = udx_management_ready(&reason);
+		printf("dhcp_readiness=%s\ndhcp_reason=%s\n", ret ? "not-ready" : "ready", reason);
+		return !!ret;
+	}
 	if (!strcmp(argv[1], "accept")) {
 		char why[80];
 		int rc = boot_accept(why, sizeof(why));

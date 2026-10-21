@@ -1,0 +1,31 @@
+--- /dev/null
++++ b/package/system/procd/patches/991-jail-pidfile-status.patch
+@@ -0,0 +1,28 @@
++From: SY108 project contributors
++Subject: [PATCH] service: report the pidfile for regular ujail instances
++
++The jail pidfile option is passed to ujail for both normal service jails and
++OCI bundles. Export that configured field in service.list for both as well,
++so consumers can find the actual child in the host PID namespace.
++
++--- a/service/instance.c
+++++ b/service/instance.c
++@@ -1761,6 +1761,8 @@
++ 		void *r = blobmsg_open_table(b, "jail");
++ 		if (in->jail.name)
++ 			blobmsg_add_string(b, "name", in->jail.name);
+++		if (in->jail.pidfile)
+++			blobmsg_add_string(b, "pidfile", in->jail.pidfile);
++ 		if (!in->bundle) {
++ 			if (in->jail.hostname)
++ 				blobmsg_add_string(b, "hostname", in->jail.hostname);
++@@ -1774,9 +1776,6 @@
++ 			blobmsg_add_u8(b, "userns", in->jail.userns);
++ 			blobmsg_add_u8(b, "cgroupsns", in->jail.cgroupsns);
++ 		} else {
++-			if (in->jail.pidfile)
++-				blobmsg_add_string(b, "pidfile", in->jail.pidfile);
++-
++ 			blobmsg_add_u8(b, "immediately", in->immediately);
++ 		}
++ 		blobmsg_add_u8(b, "console", (in->console.fd.fd > -1));
