@@ -1,15 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "common.h"
-#include "sha256.h"
+#include <openssl/sha.h>
 #include <string.h>
 
 void sha256_hex(const void *p, size_t n, char out[65])
 {
-	struct udx_sha256 h;
-	unsigned char digest[32];
-	udx_sha256_init(&h);
-	udx_sha256_update(&h, p, n);
-	udx_sha256_final(&h, digest);
+	unsigned char digest[SHA256_DIGEST_LENGTH];
+	SHA256(p, n, digest);
 	for (size_t i = 0; i < 32; i++) {
 		out[2 * i] = "0123456789abcdef"[digest[i] >> 4];
 		out[2 * i + 1] = "0123456789abcdef"[digest[i] & 15];

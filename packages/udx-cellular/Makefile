@@ -5,7 +5,7 @@ PKG_NAME:=udx-cellular
 PKG_VERSION:=3.1
 PKG_RELEASE:=5
 PKG_LICENSE:=GPL-2.0-only
-SY108_SOURCE_PATHS := packages/udx-cellular components/cpnv/runtime/components/common
+SY108_SOURCE_PATHS := packages/udx-cellular
 include $(SY108_RECIPE_DIR)../source.mk
 include $(INCLUDE_DIR)/package.mk
 
@@ -15,7 +15,7 @@ define Package/udx-cellular
   SECTION:=net
   CATEGORY:=Network
   TITLE:=UDX710 native cellular and SMS owner
-  DEPENDS:=+udx-cpnv +netifd +ubus +uci +procd +odhcp6c +libjson-c +libpthread
+  DEPENDS:=+udx-cpnv +netifd +ubus +uci +procd +odhcp6c +libjson-c +libopenssl +libpthread
 endef
 
 define Package/udx-cellular/conffiles
