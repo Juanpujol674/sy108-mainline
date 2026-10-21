@@ -23,6 +23,7 @@ bool apn_matches(const char *wanted, const char *actual)
 	       isdigit((unsigned char)s[12]) && isdigit((unsigned char)s[13]) &&
 	       !strcasecmp(s + 14, ".gprs");
 }
+
 int profile_validate(J *p)
 {
 	const char *const names[] = {"apn", "pdp_type", "cid"};
@@ -40,10 +41,12 @@ int profile_validate(J *p)
 		return errorf(CELL_INVALID, "Invalid PDP type");
 	return 0;
 }
+
 struct address {
 	unsigned char bytes[16];
 	int family;
 };
+
 static int address_mask(const char *value, struct address *a)
 {
 	char copy[512];
@@ -111,11 +114,13 @@ static int address_mask(const char *value, struct address *a)
 invalid:
 	return errorf(CELL_INVALID, "Invalid PDP address or mask");
 }
+
 static bool linklocal(struct address *a)
 {
 	return a->family == AF_INET ? (a->bytes[0] == 169 && a->bytes[1] == 254)
 				    : (a->bytes[0] == 0xfe && (a->bytes[1] & 0xc0) == 0x80);
 }
+
 static bool usable(struct address *a)
 {
 	if (a->family == AF_INET) {
@@ -126,6 +131,7 @@ static bool usable(struct address *a)
 	static const unsigned char zero[16] = {0}, loop[16] = {[15] = 1};
 	return memcmp(a->bytes, zero, 16) && memcmp(a->bytes, loop, 16) && a->bytes[0] != 0xff;
 }
+
 static bool contains(J *a, const char *s)
 {
 	for (size_t i = 0; i < json_object_array_length(a); i++)
@@ -133,6 +139,7 @@ static bool contains(J *a, const char *s)
 			return true;
 	return false;
 }
+
 J *parse_pdp(const char *raw, J *profile)
 {
 	if (profile_validate(profile) < 0)
@@ -198,6 +205,7 @@ fail:
 	json_object_put(out);
 	return NULL;
 }
+
 int bearer_active(const char *raw)
 {
 	J *rows = at_fields(raw, "+CGACT:");
@@ -219,6 +227,7 @@ int bearer_active(const char *raw)
 	json_object_put(rows);
 	return result;
 }
+
 J *bearer_default(const char *raw, J *profile)
 {
 	J *rows = at_fields(raw, "+SPIPCONTEXT:"), *selected = NULL, *out = NULL;

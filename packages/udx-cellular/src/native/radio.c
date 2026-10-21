@@ -8,6 +8,7 @@ bool radio_enabled(struct controller *c)
 {
 	return !text_equal(str(c->config, "radio_enabled"), "0");
 }
+
 int radio_state(struct controller *c)
 {
 	J *row = controller_query(c, "AT+CFUN?", 10, "+CFUN:");
@@ -24,6 +25,7 @@ int radio_state(struct controller *c)
 	integer(c->status, "cfun", state);
 	return (int)state;
 }
+
 int radio_command(struct controller *c, const char *wire, double timeout)
 {
 	char *raw = controller_at(c, wire, timeout);
@@ -32,6 +34,7 @@ int radio_command(struct controller *c, const char *wire, double timeout)
 	free(raw);
 	return 0;
 }
+
 int radio_restore(struct controller *c, bool enabled, bool wanted)
 {
 	c->restore_radio = enabled && radio_enabled(c);
@@ -58,6 +61,7 @@ int radio_restore(struct controller *c, bool enabled, bool wanted)
 	c->radio_restore_pending = false;
 	return controller_publish(c);
 }
+
 int radio_begin(struct controller *c, struct radio_change *change)
 {
 	memset(change, 0, sizeof(*change));
@@ -79,6 +83,7 @@ int radio_begin(struct controller *c, struct radio_change *change)
 		return -1;
 	return state != 1 ? 0 : errorf(CELL_MODEM, "Radio did not go offline");
 }
+
 int radio_end(struct controller *c, struct radio_change *change, bool success)
 {
 	if (!change->active)

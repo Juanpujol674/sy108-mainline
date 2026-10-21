@@ -17,6 +17,7 @@ int debug_validate(J *args)
 			return errorf(CELL_INVALID, "AT command must be a printable single line");
 	return 0;
 }
+
 J *debug_execute(struct controller *c, J *args)
 {
 	if (debug_validate(args) < 0 || transport_admit(&c->transport) < 0)

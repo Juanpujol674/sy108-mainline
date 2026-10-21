@@ -8,12 +8,14 @@
 static const char *names[] = {"sa_nsa", "nsa_only", "sa_only"},
 		  *labels[] = {"SA + NSA", "NSA only", "SA only"};
 static const int readings[] = {66, 130, 258}, writes[] = {132, 260, 516};
+
 struct physical_slot {
 	const char *name;
 	uint32_t mapping;
 };
 /* Three physical slots. Only the two documented mapping values are writable. */
 static const struct physical_slot slots[] = {{"SIM 1", 66051}, {"SIM 2", 16777731}, {"SIM 3", 0}};
+
 static int mode_index(const char *mode)
 {
 	for (int i = 0; i < 3; i++)
@@ -21,6 +23,7 @@ static int mode_index(const char *mode)
 			return i;
 	return -1;
 }
+
 int mode_validate(const char *operation, J *args)
 {
 	if (!strcmp(operation, "radio_options"))
@@ -38,6 +41,7 @@ int mode_validate(const char *operation, J *args)
 	}
 	return errorf(CELL_INVALID, "Unknown radio option");
 }
+
 static J *read_nr(struct controller *c)
 {
 	J *fields = controller_query(c, "AT+SPCAPABILITY=51,0", 10, "+SPCAPABILITY:");
@@ -75,6 +79,7 @@ static J *read_nr(struct controller *c)
 	json_object_object_add(c->status, "nr_capability", json_object_get(row));
 	return row;
 }
+
 /* The caller owns the radio_begin/radio_end transaction. No RF transition here. */
 J *mode_set_nr(struct controller *c, const char *mode)
 {
@@ -106,6 +111,7 @@ J *mode_set_nr(struct controller *c, const char *mode)
 	boolean(after, "readback_verified", true);
 	return after;
 }
+
 static J *read_slot(struct controller *c)
 {
 	J *fields = controller_query(c, "AT+SPCONFIGSIMSLOT?", 5, "+SPCONFIGSIMSLOT:");
@@ -146,6 +152,7 @@ static J *read_slot(struct controller *c)
 	json_object_object_add(c->status, "physical_sim", json_object_get(row));
 	return row;
 }
+
 static int transition(struct controller *c, const char *operation, const char *state, J *target,
 		      const char *error)
 {
@@ -159,6 +166,7 @@ static int transition(struct controller *c, const char *operation, const char *s
 	json_object_object_add(c->status, "radio_transition", row);
 	return controller_publish(c);
 }
+
 static int radio(struct controller *c)
 {
 	J *row = controller_query(c, "AT+CFUN?", 5, "+CFUN:");
@@ -175,6 +183,7 @@ static int radio(struct controller *c)
 	integer(c->status, "cfun", state);
 	return state == 1;
 }
+
 static int command(struct controller *c, const char *text, double timeout)
 {
 	char *raw = controller_at(c, text, timeout);
@@ -183,6 +192,7 @@ static int command(struct controller *c, const char *text, double timeout)
 	free(raw);
 	return 0;
 }
+
 static int invalidate_sim(struct controller *c)
 {
 	c->fallback_attempted = false;
@@ -216,6 +226,7 @@ static int invalidate_sim(struct controller *c)
 	}
 	return controller_publish(c);
 }
+
 static int refresh_sim(struct controller *c)
 {
 	char *state = controller_sim(c);
@@ -232,6 +243,7 @@ static int refresh_sim(struct controller *c)
 		return -1;
 	return ready ? 1 : 0;
 }
+
 static J *restore(struct controller *c, int rf, bool wanted)
 {
 	if (radio_restore(c, rf == 1, wanted) < 0)
@@ -240,6 +252,7 @@ static J *restore(struct controller *c, int rf, bool wanted)
 	boolean(out, "connected", c->data != NULL);
 	return out;
 }
+
 J *mode_execute(struct controller *c, const char *operation, J *args)
 {
 	if (transport_admit(&c->transport) < 0)
@@ -290,7 +303,7 @@ J *mode_execute(struct controller *c, const char *operation, J *args)
 		if (nr) {
 			J *changes = json_object_new_object();
 			string(changes, "modem.nr_capability", str(args, "mode"));
-			int rc = uci_commit(changes, NULL);
+			int rc = cell_config_commit(changes, NULL);
 			json_object_put(changes);
 			if (rc < 0) {
 				json_object_put(before);
@@ -382,7 +395,7 @@ J *mode_execute(struct controller *c, const char *operation, J *args)
 	if (nr) {
 		J *changes = json_object_new_object();
 		string(changes, "modem.nr_capability", str(args, "mode"));
-		int rc = uci_commit(changes, NULL);
+		int rc = cell_config_commit(changes, NULL);
 		json_object_put(changes);
 		if (rc < 0)
 			goto fail;

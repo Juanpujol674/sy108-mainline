@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "cellular.h"
+#include <iconv.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +17,7 @@ static bool plmn_valid(const char *s)
 			return false;
 	return true;
 }
+
 /* PLMN aliases from the pinned AOSP Internet profiles in providers.json. */
 const char *operator_brand(const char *plmn)
 {
@@ -29,6 +31,7 @@ const char *operator_brand(const char *plmn)
 			return aliases[i][1];
 	return NULL;
 }
+
 int operator_validate(const char *op, J *args)
 {
 	if (!strcmp(op, "operators_scan") || !strcmp(op, "operator_auto") ||
@@ -40,6 +43,7 @@ int operator_validate(const char *op, J *args)
 		   ? 0
 		   : errorf(CELL_INVALID, "Invalid PLMN or radio technology");
 }
+
 J *operator_catalog(struct controller *c)
 {
 	J *all = read_json(CELL_PROVIDERS, 262144);
@@ -68,6 +72,7 @@ J *operator_catalog(struct controller *c)
 	json_object_object_del(all, "providers");
 	return all;
 }
+
 /* A single Internet candidate per SIM, only after a definite activation rejection.
  * Roaming uses the SIM's home identity; manual credentials are never overwritten. */
 int operator_fallback(struct controller *c)
@@ -103,6 +108,40 @@ int operator_fallback(struct controller *c)
 	json_object_put(catalog);
 	return 0;
 }
+
+/* This modem returns raw UCS-2BE operator names even with CSCS="HEX".
+ * Keep UTF-8/ASCII names intact and convert that legacy representation before
+ * publishing JSON. An undecodable display name must not hide its valid PLMN.
+ */
+static void operator_name(J *row, const char *key, J *field, const char *plmn)
+{
+	const char *raw = json_object_get_string(field);
+	size_t length = json_object_get_string_len(field);
+	const char *encodings[] = {"UTF-8", "UTF-16BE"};
+	char *text = malloc(length * 3 + 1);
+	if (!text) {
+		string(row, key, plmn);
+		return;
+	}
+	for (size_t i = 0; i < 2; i++) {
+		iconv_t cd = iconv_open("UTF-8", encodings[i]);
+		if (cd == (iconv_t)-1)
+			continue;
+		char *input = (char *)raw, *output = text;
+		size_t left = length, space = length * 3;
+		size_t result = iconv(cd, &input, &left, &output, &space);
+		iconv_close(cd);
+		if (result != (size_t)-1 && !left) {
+			*output = 0;
+			string(row, key, text);
+			free(text);
+			return;
+		}
+	}
+	free(text);
+	string(row, key, plmn);
+}
+
 J *operator_parse_scan(const char *raw)
 {
 	if (!at_complete(raw)) {
@@ -157,10 +196,8 @@ J *operator_parse_scan(const char *raw)
 			integer(r, "status", status);
 			integer(r, "act", act);
 			string(r, "plmn", plmn);
-			string(r, "name",
-			       json_object_get_string(json_object_array_get_idx(fields, 1)));
-			string(r, "short_name",
-			       json_object_get_string(json_object_array_get_idx(fields, 2)));
+			operator_name(r, "name", json_object_array_get_idx(fields, 1), plmn);
+			operator_name(r, "short_name", json_object_array_get_idx(fields, 2), plmn);
 			json_object_array_add(rows, r);
 		}
 		json_object_put(fields);
@@ -171,6 +208,7 @@ bad:
 	errorf(CELL_INVALID, "Malformed operator scan");
 	return NULL;
 }
+
 J *operator_execute(struct controller *c, const char *op, J *args)
 {
 	if (!strcmp(op, "operator_catalog"))

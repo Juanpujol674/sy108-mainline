@@ -13,33 +13,21 @@
 #ifndef CELL_BOOT
 #define CELL_BOOT "/proc/sys/kernel/random/boot_id"
 #endif
-#ifndef CELL_OWNER_SOCKET
-#define CELL_OWNER_SOCKET "/run/udx-cpnv-warm/control.sock"
-#endif
-#ifndef CELL_AT_SESSION
-#define CELL_AT_SESSION "/sys/class/spipe/stty_lte1/session"
-#endif
 #define CELL_TELEMETRY_TASKS 8
-struct owner_status {
-	pid_t pid;
-	int pidfd;
-	char epoch[17];
-	uint64_t generation;
-};
-struct owner {
-	struct owner_status identity;
-	int pidfd;
-};
+
 struct at_channel {
 	char pending[65537];
 	size_t used;
 	char sms_kind[8];
 	unsigned sms_length;
 };
+
 struct transport {
 	int fd, urc_fd, lock_fd;
-	struct owner owner;
+	char wwan[32];
+	bool session_dead;
 	atomic_bool poisoned;
+	atomic_bool stopping;
 	bool sms_input_pending;
 	char boot[37], command[257];
 	struct at_channel channel, notifications;
@@ -48,6 +36,7 @@ struct transport {
 	J *mode_events;
 	double last_log;
 };
+
 struct controller {
 	struct transport transport;
 	J *config, *status, *data, *fallback_profile;
@@ -58,13 +47,14 @@ struct controller {
 	bool background, background_deferred;
 	bool (*foreground_pending)(void *);
 	void *foreground_context;
+	int (*publish_state)(void *, J *);
+	int (*retire_network)(void *);
+	void *service_context;
 	double telemetry_due[CELL_TELEMETRY_TASKS];
 	unsigned telemetry_failures[CELL_TELEMETRY_TASKS];
 	char telemetry_sim[48];
 };
-int owner_query(struct owner_status *row);
-int owner_check(struct owner *owner);
-void owner_close(struct owner *owner);
+
 int transport_admit(struct transport *t);
 int transport_init(struct transport *t);
 int transport_reopen(struct transport *t);
@@ -93,9 +83,11 @@ J *controller_disconnect(struct controller *c, bool quiesce);
 J *controller_connect(struct controller *c, unsigned wait_seconds);
 int controller_refresh(struct controller *c);
 int controller_radio_on(struct controller *c);
+
 struct radio_change {
 	bool active, enabled, wanted;
 };
+
 bool radio_enabled(struct controller *c);
 int radio_state(struct controller *c);
 int radio_command(struct controller *c, const char *wire, double timeout);

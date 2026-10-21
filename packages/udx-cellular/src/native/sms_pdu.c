@@ -1,4 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0-only Bounded 3GPP SMS codec; no device
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Bounded 3GPP SMS codec; no device
  * access. */
 #include "common.h"
 #include <ctype.h>
@@ -17,6 +18,7 @@ static const uint16_t gsm[128] = {
     0xc4,  0xd6, 0xd1, 0xdc,  0xa7, 0xbf,  'a',	  'b',	 'c',	'd',   'e',   'f',   'g',
     'h',   'i',	 'j',  'k',   'l',  'm',   'n',	  'o',	 'p',	'q',   'r',   's',   't',
     'u',   'v',	 'w',  'x',   'y',  'z',   0xe4,  0xf6,	 0xf1,	0xfc,  0xe0};
+
 static uint32_t extension(unsigned c)
 {
 	switch (c) {
@@ -44,6 +46,7 @@ static uint32_t extension(unsigned c)
 		return 0xfffd;
 	}
 }
+
 static size_t put_utf8(char *out, uint32_t c)
 {
 	if (c < 128) {
@@ -67,6 +70,7 @@ static size_t put_utf8(char *out, uint32_t c)
 	out[3] = (char)(0x80 | (c & 63));
 	return 4;
 }
+
 /* Decode scalars first: byte boundaries are not Unicode character boundaries.
  */
 static int utf8_scalars(const char *text, uint32_t out[918])
@@ -110,6 +114,7 @@ static int utf8_scalars(const char *text, uint32_t out[918])
 	}
 	return (int)count;
 }
+
 static int gsm_code(uint32_t c)
 {
 	for (int i = 0; i < 128; i++)
@@ -120,6 +125,7 @@ static int gsm_code(uint32_t c)
 			return 128 + i;
 	return -1;
 }
+
 int sms_validate_number(const char *p)
 {
 	if (!p)
@@ -135,10 +141,12 @@ int sms_validate_number(const char *p)
 			return errorf(CELL_INVALID, "Invalid SMS number");
 	return 0;
 }
+
 static unsigned nibble(char c)
 {
 	return c <= '9' ? (unsigned)(c - '0') : (unsigned)(toupper((unsigned char)c) - 'A' + 10);
 }
+
 static int unhex(const char *s, unsigned char out[512])
 {
 	if (!s)
@@ -153,6 +161,7 @@ static int unhex(const char *s, unsigned char out[512])
 	}
 	return (int)(n / 2);
 }
+
 J *sms_encode(const char *number, const char *text, unsigned reference)
 {
 	if (sms_validate_number(number))
@@ -258,6 +267,7 @@ J *sms_encode(const char *number, const char *text, unsigned reference)
 	}
 	return parts;
 }
+
 static char *unpack7(const unsigned char *p, size_t bytes, unsigned count, unsigned skip)
 {
 	if ((size_t)count * 7 > bytes * 8 || skip > count) {
@@ -286,10 +296,12 @@ static char *unpack7(const unsigned char *p, size_t bytes, unsigned count, unsig
 	out[used] = 0;
 	return out;
 }
+
 struct pdu_reader {
 	unsigned char bytes[512];
 	size_t size, offset;
 };
+
 static const unsigned char *take(struct pdu_reader *r, size_t n)
 {
 	if (r->offset > r->size || n > r->size - r->offset) {
@@ -300,6 +312,7 @@ static const unsigned char *take(struct pdu_reader *r, size_t n)
 	r->offset += n;
 	return p;
 }
+
 J *sms_decode(const char *hex)
 {
 	struct pdu_reader r = {0};
@@ -506,6 +519,7 @@ bad:
 		errorf(CELL_INVALID, "Invalid SMS PDU");
 	return NULL;
 }
+
 J *sms_list(const char *raw)
 {
 	if (!at_complete(raw)) {

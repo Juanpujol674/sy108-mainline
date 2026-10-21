@@ -1,6 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0-only One AT writer, separately drained URC channel. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* One AT writer, separately drained URC
+ * channel. */
 #include "cellular.h"
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -10,19 +13,31 @@
 #include <strings.h>
 #include <sys/file.h>
 #include <sys/stat.h>
-#include <sys/sysmacros.h>
 #include <syslog.h>
 #include <unistd.h>
 
 int transport_admit(struct transport *t)
 {
-	return owner_check(&t->owner);
+	if (atomic_load(&t->stopping))
+		return errorf(CELL_SYSTEM, "AT service is stopping");
+	if (t->session_dead)
+		return errorf(CELL_SYSTEM, "AT communication session ended");
+	struct pollfd p[2] = {{t->fd, 0, 0}, {t->urc_fd, 0, 0}};
+	if (poll(p, 2, 0) < 0 && errno != EINTR)
+		return errorf(CELL_SYSTEM, "AT poll: %s", strerror(errno));
+	for (unsigned i = 0; i < 2; i++)
+		if (p[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+			t->session_dead = true;
+			return errorf(CELL_SYSTEM, "AT communication session ended");
+		}
+	return 0;
 }
+
 static int mark(struct transport *t, const char *state)
 {
 	J *o = json_object_new_object();
 	string(o, "boot_id", t->boot);
-	integer(o, "generation", (int64_t)t->owner.identity.generation);
+	string(o, "wwan", t->wwan);
 	string(o, "state", state);
 	real(o, "uptime", mono());
 	if (strcmp(state, "owned") && strcmp(state, "clean"))
@@ -33,6 +48,7 @@ static int mark(struct transport *t, const char *state)
 	json_object_put(o);
 	return r;
 }
+
 int transport_poison(struct transport *t, const char *reason)
 {
 	char copy[512];
@@ -51,6 +67,7 @@ int transport_poison(struct transport *t, const char *reason)
 	}
 	return -1;
 }
+
 static int append(struct at_channel *channel, const char *p, size_t n)
 {
 	if (n > sizeof(channel->pending) - 1 - channel->used)
@@ -60,12 +77,14 @@ static int append(struct at_channel *channel, const char *p, size_t n)
 	channel->pending[channel->used] = 0;
 	return 0;
 }
+
 static void consume(struct at_channel *channel, size_t n)
 {
 	memmove(channel->pending, channel->pending + n, channel->used - n);
 	channel->used -= n;
 	channel->pending[channel->used] = 0;
 }
+
 /* Return one complete line; empty CR/LF records are harmless. */
 static int line_take(struct at_channel *channel, char *line)
 {
@@ -83,6 +102,7 @@ static int line_take(struct at_channel *channel, char *line)
 	consume(channel, end);
 	return 1;
 }
+
 static void queue_event(struct transport *t, J *event)
 {
 	if (json_object_array_length(t->sms_events) >= 128) {
@@ -93,6 +113,7 @@ static void queue_event(struct transport *t, J *event)
 	}
 	json_object_array_add(t->sms_events, event);
 }
+
 int transport_sms_line(struct transport *t, struct at_channel *channel, const char *line)
 {
 	if (channel->sms_kind[0]) {
@@ -165,11 +186,13 @@ int transport_sms_line(struct transport *t, struct at_channel *channel, const ch
 		}
 	return 0;
 }
+
 static bool transient(void)
 {
 	return errno == EAGAIN || errno == EWOULDBLOCK || errno == ENODATA || errno == EBUSY ||
 	       errno == EINTR;
 }
+
 static int read_notifications(struct transport *t, char *line)
 {
 	if (t->urc_fd < 0)
@@ -179,9 +202,11 @@ static int read_notifications(struct transport *t, char *line)
 		ssize_t n = read(t->urc_fd, buffer, sizeof(buffer));
 		if (n < 0 && transient())
 			return 0;
-		if (n <= 0)
+		if (n <= 0) {
+			t->session_dead = true;
 			return errorf(CELL_SYSTEM, "AT notification stream ended: %s",
 				      n ? strerror(errno) : "EOF");
+		}
 		if (append(&t->notifications, buffer, (size_t)n))
 			return -1;
 		while (line_take(&t->notifications, line)) {
@@ -197,24 +222,31 @@ static int read_notifications(struct transport *t, char *line)
 	}
 	return 0;
 }
+
 static int read_channels(struct transport *t, char *line)
 {
+	if (transport_admit(t))
+		return -1;
 	if (read_notifications(t, line))
 		return -1;
 	char buffer[4096];
 	ssize_t n = read(t->fd, buffer, sizeof(buffer));
 	if (n < 0 && transient())
 		return 0;
-	if (n <= 0)
+	if (n <= 0) {
+		t->session_dead = true;
 		return errorf(CELL_SYSTEM, "AT command stream ended: %s",
 			      n ? strerror(errno) : "EOF");
+	}
 	return append(&t->channel, buffer, (size_t)n);
 }
+
 static void wait_io(struct transport *t, unsigned ms)
 {
 	struct pollfd p[2] = {{t->fd, POLLIN, 0}, {t->urc_fd, POLLIN, 0}};
 	poll(p, 2, (int)ms);
 }
+
 int transport_drain(struct transport *t)
 {
 	char *line = malloc(65537);
@@ -242,31 +274,85 @@ int transport_drain(struct transport *t)
 	free(line);
 	return result;
 }
-static int open_channel(unsigned index)
+
+/* Resolve the board's single modem parent once; global WWAN N may change. */
+static int find_wwan(struct transport *t)
 {
-	char path[96], metadata[96];
-	snprintf(path, sizeof(path), "/dev/stty_lte%u", index);
-	snprintf(metadata, sizeof(metadata), "/sys/class/spipe/stty_lte%u/dev", index);
-	char *expected = read_text(metadata, 64, true);
-	unsigned major_number, minor_number;
-	int consumed = 0;
-	bool valid = expected &&
-		     sscanf(expected, "%u:%u%n", &major_number, &minor_number, &consumed) == 2 &&
-		     !expected[consumed];
-	free(expected);
-	if (!valid)
-		return errorf(CELL_SYSTEM, "AT device metadata unavailable");
+	DIR *dir = opendir("/sys/class/wwan");
+	if (!dir)
+		return errorf(CELL_SYSTEM, "WWAN class unavailable");
+	struct dirent *entry;
+	unsigned matches = 0;
+	while ((entry = readdir(dir))) {
+		const char *n = entry->d_name;
+		if (strncmp(n, "wwan", 4) || !n[4] || strspn(n + 4, "0123456789") != strlen(n + 4))
+			continue;
+		char path[384], compatible[128];
+		snprintf(path, sizeof(path), "/sys/class/wwan/%s/device/of_node/compatible", n);
+		int fd = open(path, O_RDONLY | O_CLOEXEC);
+		if (fd < 0)
+			continue;
+		ssize_t len = read(fd, compatible, sizeof(compatible));
+		close(fd);
+		const char expected[] = "sprd,udx710-modem";
+		if (len < (ssize_t)sizeof(expected) ||
+		    memcmp(compatible, expected, sizeof(expected)))
+			continue;
+		if (strlen(n) >= sizeof(t->wwan))
+			continue;
+		memcpy(t->wwan, n, strlen(n) + 1);
+		matches++;
+	}
+	closedir(dir);
+	return matches == 1
+		   ? 0
+		   : errorf(CELL_SYSTEM, "Expected one UDX710 WWAN modem, found %u", matches);
+}
+
+static int open_channel(struct transport *t, unsigned index)
+{
+	char path[96];
+	snprintf(path, sizeof(path), "/dev/%sat%u", t->wwan, index);
 	int fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
 	struct stat st;
 	if (fd < 0)
 		return errorf(CELL_SYSTEM, "Open AT channel: %s", strerror(errno));
-	if (fstat(fd, &st) || !S_ISCHR(st.st_mode) ||
-	    st.st_rdev != makedev(major_number, minor_number)) {
+	if (fstat(fd, &st) || !S_ISCHR(st.st_mode)) {
 		close(fd);
-		return errorf(CELL_SYSTEM, "Unexpected AT device identity");
+		return errorf(CELL_SYSTEM, "AT endpoint is not a character device");
 	}
 	return fd;
 }
+
+/* Only negative EAGAIN/EINTR means the driver has not accepted the request.
+ * Once accepted, wait for its response; never replay a positive prefix. */
+static int send_request(struct transport *t, const void *data, size_t size, double end, char *line)
+{
+	for (;;) {
+		if (transport_admit(t))
+			return -1;
+		ssize_t n = write(t->fd, data, size);
+		if (n == (ssize_t)size)
+			return 0;
+		if (n >= 0)
+			return errorf(CELL_UNCERTAIN, "Partial AT write; no replay");
+		if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+			t->session_dead = true;
+			return errorf(CELL_SYSTEM, "AT write failed: %s", strerror(errno));
+		}
+		if (mono() >= end)
+			return errorf(CELL_SYSTEM, "AT request was not accepted before deadline");
+		if (read_notifications(t, line))
+			return -1;
+		struct pollfd p[2] = {{t->fd, POLLOUT, 0}, {t->urc_fd, POLLIN, 0}};
+		int ms = (int)((end - mono()) * 1000);
+		if (ms > 50)
+			ms = 50;
+		if (ms > 0 && poll(p, 2, ms) < 0 && errno != EINTR)
+			return errorf(CELL_SYSTEM, "AT write wait: %s", strerror(errno));
+	}
+}
+
 static int handshake(struct transport *t)
 {
 	const char *wire = "ATE0Q0V1\r";
@@ -283,8 +369,7 @@ static int handshake(struct transport *t)
 				transport_sms_line(t, &t->channel, line);
 		t->channel.used = 0;
 		t->channel.pending[0] = 0;
-		if (write(t->fd, wire, strlen(wire)) != (ssize_t)strlen(wire)) {
-			errorf(CELL_UNCERTAIN, "Partial AT handshake write");
+		if (send_request(t, wire, strlen(wire), mono() + .25, line)) {
 			goto fail;
 		}
 		double end = mono() + .25;
@@ -309,6 +394,7 @@ done:
 	free(line);
 	return result;
 }
+
 int transport_reopen(struct transport *t)
 {
 	if (t->fd >= 0) {
@@ -317,14 +403,21 @@ int transport_reopen(struct transport *t)
 	}
 	if (transport_admit(t))
 		return -1;
-	t->fd = open_channel(1);
+	t->fd = open_channel(t, 1);
 	if (t->fd < 0)
 		return -1;
+	if (transport_admit(t))
+		return transport_poison(t, cell_error);
 	atomic_store(&t->poisoned, false);
 	memset(&t->channel, 0, sizeof(t->channel));
 	if (t->sms_input_pending) {
-		if (write(t->fd, "\033", 1) != 1)
-			return transport_poison(t, "SMS input cancellation failed");
+		char *line = malloc(65537);
+		if (!line)
+			return errorf(CELL_SYSTEM, "SMS cancellation buffer allocation");
+		int ret = send_request(t, "\033", 1, mono() + 1, line);
+		free(line);
+		if (ret)
+			return transport_poison(t, cell_error);
 		delay_ms(100);
 		t->sms_input_pending = false;
 	}
@@ -332,12 +425,14 @@ int transport_reopen(struct transport *t)
 		return -1;
 	return mark(t, "owned");
 }
+
 int transport_init(struct transport *t)
 {
 	memset(t, 0, sizeof(*t));
-	t->fd = t->urc_fd = t->lock_fd = t->owner.pidfd = -1;
+	t->fd = t->urc_fd = t->lock_fd = -1;
 	t->last_log = -60;
 	atomic_init(&t->poisoned, false);
+	atomic_init(&t->stopping, false);
 	t->sms_events = json_object_new_array();
 	t->mode_events = json_object_new_array();
 	char *boot = read_text(CELL_BOOT, 64, true);
@@ -353,11 +448,14 @@ int transport_init(struct transport *t)
 			  O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
 	if (t->lock_fd < 0 || flock(t->lock_fd, LOCK_EX | LOCK_NB))
 		return errorf(CELL_SYSTEM, "AT owner is already active");
-	t->urc_fd = open_channel(0);
+	if (find_wwan(t))
+		return -1;
+	t->urc_fd = open_channel(t, 0);
 	if (t->urc_fd < 0)
 		return -1;
 	return transport_reopen(t);
 }
+
 static char *command_exchange(struct transport *t, const char *command, double seconds,
 			      const char *pdu, bool network_mode, char **failed_response)
 {
@@ -414,12 +512,16 @@ static char *command_exchange(struct transport *t, const char *command, double s
 	unsigned terminals = 0, completions = 0;
 	bool terminal_ok = false, mode_ok = false, cmgs = false;
 	char terminal[160] = {0};
-	double end = mono() + seconds, health = mono() + 2;
-	if (write(t->fd, wire, strlen(wire)) != (ssize_t)strlen(wire)) {
-		transport_poison(t, "Partial AT write");
+	double end = mono() + seconds;
+	if (send_request(t, wire, strlen(wire), end, line)) {
+		transport_poison(t, cell_error);
 		goto bad;
 	}
 	while (mono() < end) {
+		if (atomic_load(&t->stopping)) {
+			transport_poison(t, "AT interrupted by service stop; result unknown");
+			goto bad;
+		}
 		if (read_channels(t, line)) {
 			transport_poison(t, cell_error);
 			goto bad;
@@ -470,13 +572,6 @@ static char *command_exchange(struct transport *t, const char *command, double s
 			if (!strncmp(line, "+CMGS:", 6))
 				cmgs = true;
 		}
-		if (mono() >= health) {
-			if (transport_admit(t)) {
-				transport_poison(t, cell_error);
-				goto bad;
-			}
-			health = mono() + 2;
-		}
 		if (pdu && !submitted &&
 		    (prompt || !strcmp(t->channel.pending, ">") ||
 		     !strcmp(t->channel.pending, "> "))) {
@@ -488,8 +583,8 @@ static char *command_exchange(struct transport *t, const char *command, double s
 			size_t n = strlen(pdu);
 			memcpy(payload, pdu, n);
 			payload[n++] = 26;
-			if (write(t->fd, payload, n) != (ssize_t)n) {
-				transport_poison(t, "Partial SMS PDU write; no replay");
+			if (send_request(t, payload, n, end, line)) {
+				transport_poison(t, cell_error);
 				goto bad;
 			}
 			submitted = true;
@@ -536,11 +631,11 @@ static char *command_exchange(struct transport *t, const char *command, double s
 		}
 		wait_io(t, 20);
 	}
-	transport_poison(
-	    t,
-	    pdu ? (submitted ? "AT response timed out while waiting for SMS confirmation; no replay"
-			     : "AT response timed out while waiting for SMS prompt; no replay")
-		: "AT response timed out; no command replay");
+	transport_poison(t, pdu ? (submitted ? "AT response timed out while waiting "
+					       "for SMS confirmation; no replay"
+					     : "AT response timed out while waiting "
+					       "for SMS prompt; no replay")
+				: "AT response timed out; no command replay");
 bad:
 	t->wait_mode = false;
 	json_object_array_del_idx(t->mode_events, 0, json_object_array_length(t->mode_events));
@@ -551,11 +646,13 @@ bad:
 		free(response);
 	return NULL;
 }
+
 char *transport_command(struct transport *t, const char *command, double seconds, const char *pdu,
 			bool network_mode)
 {
 	return command_exchange(t, command, seconds, pdu, network_mode, NULL);
 }
+
 char *transport_debug_command(struct transport *t, const char *command, double seconds,
 			      char **failed_response)
 {
@@ -563,6 +660,7 @@ char *transport_debug_command(struct transport *t, const char *command, double s
 	return command_exchange(t, command, seconds, NULL,
 				!strncasecmp(command, "AT+SPTESTMODE=", 14), failed_response);
 }
+
 void transport_close(struct transport *t)
 {
 	if (t->fd >= 0)
@@ -572,7 +670,6 @@ void transport_close(struct transport *t)
 	t->fd = t->urc_fd = -1;
 	if (t->boot[0])
 		mark(t, atomic_load(&t->poisoned) ? "closed" : "clean");
-	owner_close(&t->owner);
 	if (t->lock_fd >= 0)
 		close(t->lock_fd);
 	t->lock_fd = -1;

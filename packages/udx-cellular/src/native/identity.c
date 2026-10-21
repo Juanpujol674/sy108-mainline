@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 static bool digits(const char *s)
 {
 	if (!s || strlen(s) != 15)
@@ -13,6 +14,7 @@ static bool digits(const char *s)
 			return false;
 	return true;
 }
+
 int identity_validate(const char *operation, J *args)
 {
 	if (!strcmp(operation, "imei_read"))
@@ -31,6 +33,7 @@ int identity_validate(const char *operation, J *args)
 	}
 	return sum % 10 ? errorf(CELL_INVALID, "IMEI Luhn check failed") : 0;
 }
+
 J *identity_parse(const char *raw)
 {
 	if (!at_complete(raw)) {
@@ -80,6 +83,7 @@ bad:
 	errorf(CELL_INVALID, "Missing or ambiguous IMEI identities");
 	return NULL;
 }
+
 static J *read_identities(struct controller *c)
 {
 	char *raw = controller_at(c, "AT+SPIMEI?", 5);
@@ -87,6 +91,7 @@ static J *read_identities(struct controller *c)
 	free(raw);
 	return rows;
 }
+
 static const char *lookup(J *rows, int slot)
 {
 	for (size_t i = 0; i < json_object_array_length(rows); i++) {
@@ -96,6 +101,7 @@ static const char *lookup(J *rows, int slot)
 	}
 	return NULL;
 }
+
 J *identity_execute(struct controller *c, const char *operation, J *args)
 {
 	J *rows = read_identities(c);

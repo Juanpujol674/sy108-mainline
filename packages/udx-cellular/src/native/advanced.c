@@ -19,6 +19,7 @@ static const struct band nr[] = {{"n1", true, 1},     {"n3", true, 4},	   {"n5",
 static const char *modes[] = {"lte_only", "nr_only", "nr_lte", "nr_lte_wcdma_gsm"},
 		  *labels[] = {"LTE", "NR", "NR + LTE", "NR + LTE + WCDMA + GSM"};
 static const int mode_codes[] = {3, 128, 131, 134};
+
 static int mode_index(const char *name)
 {
 	for (int i = 0; i < 4; i++)
@@ -26,6 +27,7 @@ static int mode_index(const char *name)
 			return i;
 	return -1;
 }
+
 static const struct band *find_band(bool is_nr, const char *name)
 {
 	const struct band *list = is_nr ? nr : lte;
@@ -35,6 +37,7 @@ static const struct band *find_band(bool is_nr, const char *name)
 			return &list[i];
 	return NULL;
 }
+
 int advanced_validate(const char *op, J *args)
 {
 	if (!strcmp(op, "network_preset")) {
@@ -103,6 +106,7 @@ int advanced_validate(const char *op, J *args)
 	return !strcmp(op, "advanced_refresh") ? 0
 					       : errorf(CELL_INVALID, "Unknown advanced operation");
 }
+
 static J *mask_object(uint32_t fdd0, uint32_t fdd1, uint32_t tdd0, uint32_t tdd1)
 {
 	J *out = json_object_new_object(), *f = json_object_new_array(),
@@ -115,6 +119,7 @@ static J *mask_object(uint32_t fdd0, uint32_t fdd1, uint32_t tdd0, uint32_t tdd1
 	json_object_object_add(out, "tdd", t);
 	return out;
 }
+
 static J *decode_mask(struct controller *c, bool is_nr, bool capability)
 {
 	J *row = controller_query(c,
@@ -160,6 +165,7 @@ invalid:
 	errorf(CELL_INVALID, "Invalid complete band mask");
 	return NULL;
 }
+
 static J *decode(struct controller *c, bool is_nr)
 {
 	J *selected = decode_mask(c, is_nr, false);
@@ -183,6 +189,7 @@ static J *decode(struct controller *c, bool is_nr)
 		string(selected, "capability_error", cell_error);
 	return selected;
 }
+
 static bool mask_matches(J *actual, J *desired)
 {
 	if (json_object_equal(get(actual, "masks"), desired))
@@ -198,6 +205,7 @@ static bool mask_matches(J *actual, J *desired)
 	return json_object_get_boolean(get(actual, "unrestricted")) &&
 	       json_object_equal(desired, get(actual, "supported_masks"));
 }
+
 static J *read_cell_lock(struct controller *c, const char *rat)
 {
 	int number = text_equal(rat, "nr") ? 16 : 12;
@@ -227,6 +235,7 @@ static J *read_cell_lock(struct controller *c, const char *rat)
 	}
 	return row;
 }
+
 static J *read_bands(struct controller *c)
 {
 	J *out = json_object_new_object();
@@ -240,6 +249,7 @@ static J *read_bands(struct controller *c)
 	}
 	return out;
 }
+
 static J *workmode(struct controller *c)
 {
 	J *row = controller_query(c, "AT+SPTESTMODEM?", 5, "+SPTESTMODEM:");
@@ -263,6 +273,7 @@ invalid:
 	errorf(CELL_INVALID, "Incomplete network mode readback");
 	return NULL;
 }
+
 int advanced_set_mode(struct controller *c, const char *mode, J **result)
 {
 	*result = NULL;
@@ -316,6 +327,7 @@ fail:
 	json_object_put(out);
 	return -1;
 }
+
 static J *refresh(struct controller *c)
 {
 	J *limits = read_bands(c);
@@ -379,6 +391,7 @@ static J *refresh(struct controller *c)
 	}
 	return value;
 }
+
 static int command(struct controller *c, const char *text, double timeout)
 {
 	char *raw = controller_at(c, text, timeout);
@@ -387,6 +400,7 @@ static int command(struct controller *c, const char *text, double timeout)
 	free(raw);
 	return 0;
 }
+
 J *advanced_execute(struct controller *c, const char *op, J *args)
 {
 	if (transport_admit(&c->transport) < 0)
@@ -422,7 +436,7 @@ J *advanced_execute(struct controller *c, const char *op, J *args)
 		J *changes = json_object_new_object();
 		string(changes, "modem.network_mode", mode);
 		string(changes, "modem.nr_capability", nrmode);
-		int rc = uci_commit(changes, NULL);
+		int rc = cell_config_commit(changes, NULL);
 		json_object_put(changes);
 		if (rc < 0) {
 			json_object_put(result);

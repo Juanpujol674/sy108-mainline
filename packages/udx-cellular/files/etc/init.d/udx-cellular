@@ -7,11 +7,11 @@ start_service() {
 	procd_set_param command /usr/sbin/udx-cellulard
 	procd_set_param stdout 1
 	procd_set_param stderr 1
-	procd_set_param term_timeout 240
+	procd_set_param term_timeout 5
 	# The service reopens AT after a timeout; procd respawn remains disabled.
 	procd_close_instance
 }
 stop_service() {
-	# rc.common ignores a stop_service return value before procd_kill.
-	/usr/sbin/udx-system-quiesce --cellular-only || exit 1
+	ubus -t 12 call udx.cellular quiesce >/dev/null ||
+		logger -p daemon.err -t udx-cellular 'Service quiesce failed or timed out; continuing stop'
 }

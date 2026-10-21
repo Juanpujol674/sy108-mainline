@@ -9,7 +9,9 @@
 #include <sys/types.h>
 
 typedef struct json_object J;
+
 enum cell_error_kind { CELL_INVALID, CELL_SYSTEM, CELL_MODEM, CELL_UNCERTAIN };
+
 extern _Thread_local char cell_error[512];
 extern _Thread_local enum cell_error_kind cell_error_kind;
 int errorf(enum cell_error_kind kind, const char *format, ...)
@@ -17,7 +19,7 @@ int errorf(enum cell_error_kind kind, const char *format, ...)
 double mono(void);
 void delay_ms(unsigned ms);
 int random_hex(char *out, size_t bytes);
-void sha256_hex(const void *data, size_t length, char out[65]);
+int sha256_hex(const void *data, size_t length, char out[65]);
 bool hex_string(const char *value, size_t length);
 bool text_equal(const char *a, const char *b);
 bool integer_text(const char *text, int64_t minimum, int64_t maximum, int64_t *out);
@@ -37,18 +39,11 @@ char *read_text(const char *path, size_t maximum, bool trim);
 J *read_json(const char *path, size_t maximum);
 int atomic_json(const char *path, J *value, bool durable);
 int mkdir_private(const char *path);
-int seqpacket(const char *path, const void *request, size_t request_size, char *response,
-	      size_t capacity, unsigned timeout_ms, pid_t *peer_pid);
-int seqpacket_pinned(const char *path, const void *request, size_t request_size, char *response,
-		     size_t capacity, unsigned timeout_ms, pid_t *peer_pid, int *peer_pidfd);
 int command_run(const char *const argv[], const char *input, unsigned timeout_ms, size_t maximum,
 		char **output);
-bool pidfd_exited(int fd);
-int pidfd_open_checked(pid_t pid);
-int pidfd_signal(int fd, int signal);
-bool volatile_run(void);
-J *uci_sections(void);
-int uci_commit(J *values, J *deletes);
+J *cell_config_sections(void);
+int cell_config_commit(J *values, J *deletes);
+J *cell_bus_call(const char *method, J *arguments, unsigned timeout_ms);
 J *at_fields(const char *raw, const char *prefix);
 J *at_one(const char *raw, const char *prefix);
 bool at_complete(const char *raw);
