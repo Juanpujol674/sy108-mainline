@@ -17,6 +17,18 @@ p.add_argument('--jobs', type=int, default=6)
 p.add_argument('--configure-only', action='store_true')
 a = p.parse_args()
 tree = OPENWRT
+# A reused build tree may still contain the retired SY108 LuCI patch.
+# Verify the upstream views before packaging the independent extension.
+subprocess.run([
+    'git', '-C', str(tree / 'feeds/luci'), 'diff', '--exit-code', 'HEAD', '--',
+    'modules/luci-mod-system/htdocs/luci-static/resources/view/system/flash.js',
+    'modules/luci-mod-system/htdocs/luci-static/resources/view/system/reboot.js',
+], check=True)
+shutil.copytree(
+    PROJECT / 'integration/openwrt/target/linux/sprd',
+    tree / 'target/linux/sprd',
+    dirs_exist_ok=True,
+)
 lock = json.loads((PROJECT / 'manifests/kernel.json').read_text())
 archive_path = Path(
     subprocess.check_output([sys.executable, str(PROJECT / 'tools/build/kernel-source.py')], text=True).strip()
@@ -52,10 +64,10 @@ for previous in output.iterdir():
 for source in bin_dir.iterdir():
     if source.is_file():
         shutil.copy2(source, output / source.name)
-kernel = tree / 'build_dir/target-aarch64_cortex-a55_musl/linux-sprd_udx710/linux-7.3.0-rc7'
+kernel = tree / f'build_dir/target-aarch64_cortex-a55_musl/linux-sprd_udx710/linux-{lock["version"]}'
 # OpenWrt derives the target triplet from the selected profile.
 if not kernel.is_dir():
-    candidates = list((tree / 'build_dir').glob('target-*/linux-sprd_udx710/linux-7.3.0-rc7'))
+    candidates = list((tree / 'build_dir').glob(f'target-*/linux-sprd_udx710/linux-{lock["version"]}'))
     if len(candidates) != 1:
         raise RuntimeError('Missing or ambiguous built kernel')
     kernel = candidates[0]

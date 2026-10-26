@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #define _GNU_SOURCE
 #include "root-health.h"
+
 int main(int argc, char **argv)
 {
 	struct udx_root_layout layout;

@@ -3,7 +3,7 @@ set -eu
 [ "$#" = 1 ] && [ "$1" = --execute ] || exit 64
 [ "$(cat /etc/udx-openwrt-root 2>/dev/null)" = 'OpenWrt production root' ] || exit 64
 /usr/libexec/udx-verify-root running >/dev/null
-/usr/libexec/udx-wait-quiesce
+/usr/sbin/udx-system-quiesce
 # Preserve the existing device SSH identity through fstools' standard archive.
 directory=$(mktemp -d /tmp/sy108-reset.XXXXXX)
 reset_started=0

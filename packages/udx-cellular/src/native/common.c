@@ -24,6 +24,7 @@
 
 _Thread_local char cell_error[512];
 _Thread_local enum cell_error_kind cell_error_kind;
+
 int errorf(enum cell_error_kind kind, const char *format, ...)
 {
 	va_list ap;
@@ -33,22 +34,26 @@ int errorf(enum cell_error_kind kind, const char *format, ...)
 	cell_error_kind = kind;
 	return -1;
 }
+
 double mono(void)
 {
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	return t.tv_sec + t.tv_nsec / 1e9;
 }
+
 void delay_ms(unsigned ms)
 {
 	struct timespec t = {ms / 1000, (long)(ms % 1000) * 1000000};
 	while (nanosleep(&t, &t) && errno == EINTR) {
 	}
 }
+
 bool text_equal(const char *a, const char *b)
 {
 	return a && b && !strcmp(a, b);
 }
+
 bool hex_string(const char *s, size_t n)
 {
 	if (!s || strlen(s) != n)
@@ -58,6 +63,7 @@ bool hex_string(const char *s, size_t n)
 			return false;
 	return true;
 }
+
 bool integer_text(const char *s, int64_t low, int64_t high, int64_t *out)
 {
 	if (!s || !*s || (*s != '-' && !isdigit((unsigned char)*s)))
@@ -71,6 +77,7 @@ bool integer_text(const char *s, int64_t low, int64_t high, int64_t *out)
 		*out = v;
 	return true;
 }
+
 int random_hex(char *out, size_t n)
 {
 	if (n > 64)
@@ -92,6 +99,7 @@ int random_hex(char *out, size_t n)
 	out[2 * n] = 0;
 	return 0;
 }
+
 J *get(J *o, const char *key)
 {
 	J *v = NULL;
@@ -99,27 +107,33 @@ J *get(J *o, const char *key)
 		json_object_object_get_ex(o, key, &v);
 	return v;
 }
+
 const char *str(J *o, const char *key)
 {
 	J *v = get(o, key);
 	return json_object_is_type(v, json_type_string) ? json_object_get_string(v) : NULL;
 }
+
 void string(J *o, const char *key, const char *s)
 {
 	json_object_object_add(o, key, s ? json_object_new_string(s) : NULL);
 }
+
 void integer(J *o, const char *key, int64_t n)
 {
 	json_object_object_add(o, key, json_object_new_int64(n));
 }
+
 void boolean(J *o, const char *key, bool v)
 {
 	json_object_object_add(o, key, json_object_new_boolean(v));
 }
+
 void real(J *o, const char *key, double v)
 {
 	json_object_object_add(o, key, isfinite(v) ? json_object_new_double(v) : NULL);
 }
+
 J *jclone(J *o)
 {
 	J *v = NULL;
@@ -127,6 +141,7 @@ J *jclone(J *o)
 		return NULL;
 	return v;
 }
+
 void merge(J *dst, J *src)
 {
 	if (!src)
@@ -136,6 +151,7 @@ void merge(J *dst, J *src)
 		json_object_object_add(dst, key, json_object_get(value));
 	}
 }
+
 bool keys(J *o, const char *const *names, size_t count)
 {
 	if (!json_object_is_type(o, json_type_object) ||
@@ -149,184 +165,73 @@ bool keys(J *o, const char *const *names, size_t count)
 	return true;
 }
 
-/* Check duplicate keys before json-c would discard them. Also reject non-JSON
- * numeric extensions, embedded NUL strings and excessive nesting at ingress. */
-struct scan {
-	const char *p, *end;
-	bool document;
-};
-static void space(struct scan *s)
+/* json-c owns syntax; validate values that cannot cross the C string/AT ABI. */
+static bool json_values_valid(J *value, bool document)
 {
-	while (s->p < s->end && strchr(" \t\r\n", *s->p))
-		s->p++;
+	switch (json_object_get_type(value)) {
+	case json_type_string:
+		return document || strlen(json_object_get_string(value)) ==
+				       (size_t)json_object_get_string_len(value);
+	case json_type_double:
+		return isfinite(json_object_get_double(value));
+	case json_type_array:
+		for (size_t i = 0; i < json_object_array_length(value); i++)
+			if (!json_values_valid(json_object_array_get_idx(value, i), document))
+				return false;
+		break;
+	case json_type_object:
+		json_object_object_foreach(value, key, child)
+		{
+			(void)key;
+			if (!json_values_valid(child, document))
+				return false;
+		}
+		break;
+	default:
+		break;
+	}
+	return true;
 }
-static J *scan_string(struct scan *s, bool key)
-{
-	const char *start = s->p++;
-	bool escaped = false;
-	while (s->p < s->end) {
-		unsigned char c = (unsigned char)*s->p++;
-		if (!escaped && c == '"') {
-			struct json_tokener *t = json_tokener_new();
-			J *v = json_tokener_parse_ex(t, start, (int)(s->p - start));
-			bool ok = json_tokener_get_error(t) == json_tokener_success &&
-				  json_object_is_type(v, json_type_string);
-			json_tokener_free(t);
-			if (!ok ||
-			    ((!s->document || key) && strlen(json_object_get_string(v)) !=
-							  (size_t)json_object_get_string_len(v))) {
-				json_object_put(v);
-				return NULL;
-			}
-			return v;
-		}
-		if (c < 32)
-			return NULL;
-		if (escaped)
-			escaped = false;
-		else if (c == '\\')
-			escaped = true;
-	}
-	return NULL;
-}
-static bool scan_value(struct scan *s, unsigned depth)
-{
-	space(s);
-	if (s->p >= s->end || depth > 32)
-		return false;
-	if (*s->p == '"') {
-		J *v = scan_string(s, false);
-		bool ok = v != NULL;
-		json_object_put(v);
-		return ok;
-	}
-	if (*s->p == '{' || *s->p == '[') {
-		bool object = *s->p++ == '{';
-		char end = object ? '}' : ']';
-		J *seen = object ? json_object_new_object() : NULL;
-		bool ok = false;
-		space(s);
-		if (s->p < s->end && *s->p == end) {
-			s->p++;
-			ok = true;
-			goto done;
-		}
-		for (unsigned count = 0; count < 4096; count++) {
-			if (object) {
-				space(s);
-				if (s->p >= s->end || *s->p != '"')
-					goto done;
-				J *key = scan_string(s, true), *old;
-				if (!key)
-					goto done;
-				const char *name = json_object_get_string(key);
-				if (json_object_object_get_ex(seen, name, &old)) {
-					json_object_put(key);
-					goto done;
-				}
-				json_object_object_add(seen, name, json_object_new_boolean(true));
-				json_object_put(key);
-				space(s);
-				if (s->p >= s->end || *s->p++ != ':')
-					goto done;
-			}
-			if (!scan_value(s, depth + 1))
-				goto done;
-			space(s);
-			if (s->p >= s->end)
-				goto done;
-			if (*s->p == end) {
-				s->p++;
-				ok = true;
-				goto done;
-			}
-			if (*s->p++ != ',')
-				goto done;
-		}
-	done:
-		json_object_put(seen);
-		return ok;
-	}
-	const char *words[] = {"true", "false", "null"};
-	for (size_t i = 0; i < 3; i++) {
-		size_t n = strlen(words[i]);
-		if ((size_t)(s->end - s->p) >= n && !memcmp(s->p, words[i], n)) {
-			s->p += n;
-			return true;
-		}
-	}
-	const char *number_start = s->p;
-	if (*s->p == '-')
-		s->p++;
-	if (s->p >= s->end || !isdigit((unsigned char)*s->p))
-		return false;
-	if (*s->p == '0')
-		s->p++;
-	else
-		while (s->p < s->end && isdigit((unsigned char)*s->p))
-			s->p++;
-	if (s->p < s->end && *s->p == '.') {
-		s->p++;
-		if (s->p >= s->end || !isdigit((unsigned char)*s->p))
-			return false;
-		while (s->p < s->end && isdigit((unsigned char)*s->p))
-			s->p++;
-	}
-	if (s->p < s->end && (*s->p == 'e' || *s->p == 'E')) {
-		s->p++;
-		if (s->p < s->end && (*s->p == '+' || *s->p == '-'))
-			s->p++;
-		if (s->p >= s->end || !isdigit((unsigned char)*s->p))
-			return false;
-		while (s->p < s->end && isdigit((unsigned char)*s->p))
-			s->p++;
-	}
-	size_t length = (size_t)(s->p - number_start);
-	if (length > 127)
-		return false;
-	char numeric[128];
-	memcpy(numeric, number_start, length);
-	numeric[length] = 0;
-	return isfinite(strtod(numeric, NULL));
-}
+
 static J *parse_document(const char *data, size_t n, bool document)
 {
-	if (!data || !n || n > 2097152) {
-		errorf(CELL_INVALID, "JSON size invalid");
-		return NULL;
-	}
-	struct scan s = {data, data + n, document};
-	if (!scan_value(&s, 0)) {
-		errorf(CELL_INVALID, "Invalid JSON or duplicate field");
-		return NULL;
-	}
-	space(&s);
-	if (s.p != s.end) {
-		errorf(CELL_INVALID, "Trailing JSON data");
+	if (!data || !n || n > 2097152 || memchr(data, 0, n)) {
+		errorf(CELL_INVALID, "JSON size or encoding invalid");
 		return NULL;
 	}
 	struct json_tokener *t = json_tokener_new_ex(33);
+	if (!t) {
+		errorf(CELL_SYSTEM, "JSON allocation failed");
+		return NULL;
+	}
 	json_tokener_set_flags(t, JSON_TOKENER_STRICT | JSON_TOKENER_VALIDATE_UTF8);
 	J *o = json_tokener_parse_ex(t, data, (int)n);
-	if (json_tokener_get_error(t) == json_tokener_continue)
+	size_t end = json_tokener_get_parse_end(t);
+	if (json_tokener_get_error(t) == json_tokener_continue && end == n)
 		o = json_tokener_parse_ex(t, " ", 1);
-	if (json_tokener_get_error(t) != json_tokener_success) {
+	while (end < n && strchr(" \t\r\n", data[end]))
+		end++;
+	if (json_tokener_get_error(t) != json_tokener_success || end != n ||
+	    !json_values_valid(o, document)) {
 		json_object_put(o);
 		o = NULL;
-		errorf(CELL_INVALID, "Invalid JSON encoding");
+		errorf(CELL_INVALID, "Invalid JSON value or trailing data");
 	}
 	json_tokener_free(t);
 	return o;
 }
+
 J *parse_json(const char *data, size_t n)
 {
 	return parse_document(data, n, false);
 }
+
 /* Stored SMS text may contain U+0000. Keys and RPC/command inputs stay strict. */
 J *parse_json_document(const char *data, size_t n)
 {
 	return parse_document(data, n, true);
 }
+
 char *read_text(const char *path, size_t max, bool trim)
 {
 	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -396,6 +301,7 @@ char *read_text(const char *path, size_t max, bool trim)
 	p[n] = 0;
 	return p;
 }
+
 J *read_json(const char *path, size_t maximum)
 {
 	char *p = read_text(path, maximum, false);
@@ -412,6 +318,7 @@ J *read_json(const char *path, size_t maximum)
 		errno = EINVAL;
 	return o;
 }
+
 int mkdir_private(const char *path)
 {
 	struct stat st;
@@ -421,6 +328,7 @@ int mkdir_private(const char *path)
 		return errorf(CELL_SYSTEM, "Unexpected private directory %s", path);
 	return 0;
 }
+
 static int write_all(int fd, const char *p, size_t n)
 {
 	while (n) {
@@ -434,6 +342,7 @@ static int write_all(int fd, const char *p, size_t n)
 	}
 	return 0;
 }
+
 int atomic_json(const char *path, J *o, bool durable)
 {
 	char temp[PATH_MAX], parent[PATH_MAX];
@@ -470,72 +379,7 @@ int atomic_json(const char *path, J *o, bool durable)
 		return errorf(CELL_SYSTEM, "Persist %s: %s", path, strerror(errno));
 	return 0;
 }
-int seqpacket_pinned(const char *path, const void *request, size_t size, char *response, size_t cap,
-		     unsigned ms, pid_t *pid, int *peer_pidfd)
-{
-	if (peer_pidfd)
-		*peer_pidfd = -1;
-	if (!cap || strlen(path) >= sizeof(((struct sockaddr_un *)0)->sun_path))
-		return errorf(CELL_INVALID, "Socket size invalid");
-	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
-	if (fd < 0)
-		return errorf(CELL_SYSTEM, "socket: %s", strerror(errno));
-	struct timeval tv = {ms / 1000, (ms % 1000) * 1000};
-	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-	struct sockaddr_un addr = {.sun_family = AF_UNIX};
-	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
-	struct ucred cred;
-	socklen_t len = sizeof(cred);
-	int result = -1, pinned = -1;
-	if (connect(fd, (void *)&addr, sizeof(addr)))
-		goto fail;
-	if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) || cred.uid || cred.pid <= 0) {
-		errno = EPERM;
-		goto fail;
-	}
-	if (pid)
-		*pid = cred.pid;
-	if (peer_pidfd) {
-		pinned = pidfd_open_checked(cred.pid);
-		if (pinned < 0 || pidfd_exited(pinned))
-			goto fail;
-	}
-	if (send(fd, request, size, MSG_NOSIGNAL) != (ssize_t)size)
-		goto fail;
-	struct iovec iov = {response, cap - 1};
-	struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1};
-	ssize_t n = recvmsg(fd, &msg, 0);
-	if (n <= 0 || (msg.msg_flags & MSG_TRUNC)) {
-		if (n >= 0)
-			errno = EPROTO;
-		goto fail;
-	}
-	response[n] = 0;
-	result = (int)n;
-	if (peer_pidfd) {
-		*peer_pidfd = pinned;
-		pinned = -1;
-	}
-	goto done;
-fail:
-	{
-		int saved = errno;
-		errorf(CELL_SYSTEM, "Service request failed: %s; do not replay uncertain mutations",
-		       strerror(saved));
-		errno = saved;
-	}
-done:
-	if (pinned >= 0)
-		close(pinned);
-	close(fd);
-	return result;
-}
-int seqpacket(const char *path, const void *request, size_t size, char *response, size_t cap,
-	      unsigned ms, pid_t *pid)
-{
-	return seqpacket_pinned(path, request, size, response, cap, ms, pid, NULL);
-}
+
 int command_run(const char *const argv[], const char *input, unsigned ms, size_t max, char **out)
 {
 	int in[2] = {-1, -1}, output[2] = {-1, -1};
@@ -636,22 +480,4 @@ pipe_fail:
 			close(output[i]);
 	}
 	return errorf(CELL_SYSTEM, "Create command pipes: %s", strerror(errno));
-}
-int pidfd_open_checked(pid_t pid)
-{
-	return (int)syscall(SYS_pidfd_open, pid, 0);
-}
-int pidfd_signal(int fd, int sig)
-{
-	return (int)syscall(SYS_pidfd_send_signal, fd, sig, NULL, 0);
-}
-bool pidfd_exited(int fd)
-{
-	struct pollfd p = {fd, POLLIN, 0};
-	return poll(&p, 1, 0) > 0 && (p.revents & (POLLIN | POLLHUP | POLLERR));
-}
-bool volatile_run(void)
-{
-	struct statfs fs;
-	return !statfs("/run", &fs) && fs.f_type == TMPFS_MAGIC;
 }

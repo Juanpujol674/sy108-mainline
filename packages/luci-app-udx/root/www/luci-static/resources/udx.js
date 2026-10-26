@@ -9,19 +9,19 @@ var boardRPC =
     rpc.declare({object : 'system', method : 'board', expect : {'' : {}}, reject : true});
 var systemRPC =
     rpc.declare({object : 'system', method : 'info', expect : {'' : {}}, reject : true});
-var call = rpc.declare({
-    object : 'udx',
-    method : 'cellular',
-    params : [ 'operation', 'arguments' ],
-    expect : {'' : {}},
-    reject : true
-});
-var historyRPC =
-    rpc.declare({object : 'udx', method : 'sms_history_status', expect : {'' : {}}, reject : true});
-var smsRPC =
-    rpc.declare({object : 'udx', method : 'sms_status', expect : {'' : {}}, reject : true});
-var apnRPC =
-    rpc.declare({object : 'udx', method : 'apn_status', expect : {'' : {}}, reject : true});
+function call(operation, args) {
+    args = args || {};
+    var fields = Object.keys(args);
+    return rpc.declare({ object: 'udx.cellular', method: operation,
+        params: fields, expect: { '': {} }, reject: true })
+        .apply(null, fields.map(function(key) { return args[key]; }));
+}
+var cellStatusRPC = rpc.declare({object: 'udx.cellular', method: 'status', expect: {'': {}}, reject: true});
+var historyRPC = rpc.declare({object: 'udx.cellular', method: 'sms_history_status', expect: {'': {}}, reject: true});
+var smsRPC = rpc.declare({object: 'udx.cellular', method: 'sms_status', expect: {'': {}}, reject: true});
+var apnRPC = rpc.declare({object: 'udx.cellular', method: 'apn_status', expect: {'': {}}, reject: true});
+var wanRPC = rpc.declare({object: 'network.interface.wan', method: 'status', expect: {'': {}}, reject: true});
+var wan6RPC = rpc.declare({object: 'network.interface.wan6', method: 'status', expect: {'': {}}, reject: true});
 var usbRPC = rpc.declare({
     object : 'udx',
     method : 'usb',
@@ -30,7 +30,7 @@ var usbRPC = rpc.declare({
     reject : true
 });
 var receiptRPC = rpc.declare({
-    object : 'udx',
+    object : 'udx.cellular',
     method : 'sms_receipt',
     params : [ 'request_id' ],
     expect : {'' : {}},
@@ -41,7 +41,7 @@ var frequencyRPC =
 var frequencyApplyRPC = rpc.declare({
     object : 'udx',
     method : 'frequency_apply',
-    params : [ 'cpu_governor', 'cpu_min_khz', 'cpu_max_khz', 'ddr_governor', 'ddr_frequency_hz' ],
+    params : [ 'cpu_governor', 'cpu_min_khz', 'cpu_max_khz' ],
     expect : {'' : {}},
     reject : true
 });
@@ -115,14 +115,27 @@ function execute(operation, args) {
 }
 function getStatus() {
     return Promise
-        .all([ statusRPC(), L.resolveDefault(systemRPC(), {}), L.resolveDefault(boardRPC(), {}) ])
+        .all([ statusRPC(), L.resolveDefault(systemRPC(), {}), L.resolveDefault(boardRPC(), {}),
+               L.resolveDefault(cellStatusRPC(), {available: false}), L.resolveDefault(wanRPC(), {}),
+               L.resolveDefault(wan6RPC(), {}) ])
         .then(function(rows) {
-            if (!rows[0].board)
+            if (!rows[0].boot)
                 throw failure(rows[0]);
             rows[0].memory = rows[1].memory || {};
             rows[0].swap = rows[1].swap || {};
             rows[0].system_info = rows[1];
-            rows[0].board = Object.assign(rows[0].board, rows[2]);
+            rows[0].board = rows[2];
+            rows[0].cellular = rows[3];
+            var addresses = [];
+            [rows[4], rows[5]].forEach(function(network) {
+                (network['ipv6-address'] || []).forEach(function(row) {
+                    var ip = row.address || '';
+                    if (ip && !/^fe[89ab]/i.test(ip) && ip !== '::' && ip !== '::1' && addresses.indexOf(ip) < 0)
+                        addresses.push(ip);
+                });
+            });
+            rows[0].cellular_kernel = {ipv6_global_addresses: addresses};
+            rows[0].cellular_netifd = {wan: rows[4], wan6: rows[5]};
             return rows[0];
         });
 }
@@ -307,8 +320,8 @@ function setChoices(option, rows, selected) {
 return baseclass.extend({
     setChoices : setChoices,
     frequencyStatus : frequencyRPC,
-    frequencyApply : function(cpu, minimum, maximum, ddr, requested) {
-        return frequencyApplyRPC(cpu, +minimum, +maximum, ddr, +requested).then(function(r) {
+    frequencyApply : function(cpu, minimum, maximum) {
+        return frequencyApplyRPC(cpu, +minimum, +maximum).then(function(r) {
             if (!r.accepted)
                 throw failure(r);
             return r;

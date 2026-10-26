@@ -15,6 +15,8 @@ PROJECT = Path(__file__).resolve().parents[2]
 
 def export_kernel():
     lock = json.loads((PROJECT / "manifests/kernel.json").read_text())
+    version = lock["version"]
+    series = ".".join(version.split(".")[:2])
     target_ref = lock.get("commit", "HEAD")
     commit = subprocess.check_output(
         ["git", "-C", str(LINUX), "rev-parse", f"{target_ref}^{{commit}}"],
@@ -22,7 +24,7 @@ def export_kernel():
     ).strip()
     if lock.get("commit") and commit != lock["commit"]:
         raise SystemExit(f"Missing locked Linux commit {lock['commit']}")
-    archive = lock.get("archive") or f"linux-7.3.0-rc7-sy108-{commit[:12]}.tar.gz"
+    archive = lock.get("archive") or f"linux-{version}-sy108-{commit[:12]}.tar.gz"
     dest = DOWNLOADS / archive
     dest.parent.mkdir(parents=True, exist_ok=True)
     if not dest.exists():
@@ -30,7 +32,7 @@ def export_kernel():
         try:
             with partial.open("wb") as output:
                 process = subprocess.Popen(
-                    ["git", "-C", str(LINUX), "archive", "--format=tar", "--prefix=linux-7.3.0-rc7/", commit],
+                    ["git", "-C", str(LINUX), "archive", "--format=tar", f"--prefix=linux-{version}/", commit],
                     stdout=subprocess.PIPE,
                 )
                 compressed = subprocess.run(["gzip", "-n"], stdin=process.stdout, stdout=output)
@@ -44,9 +46,9 @@ def export_kernel():
         digest = hashlib.file_digest(source, "sha256").hexdigest()
     if lock.get("sha256") and lock.get("archive") == archive and digest != lock["sha256"]:
         raise SystemExit("Linux archive checksum mismatch")
-    kernel_mk = OPENWRT / "target/linux/sprd/kernel-7.3"
+    kernel_mk = OPENWRT / f"target/linux/sprd/kernel-{series}"
     if kernel_mk.parent.is_dir():
-        kernel_mk.write_text(f"LINUX_VERSION-7.3 = .0-rc7\nLINUX_KERNEL_HASH-7.3.0-rc7 = {digest}\n")
+        kernel_mk.write_text(f"LINUX_VERSION-{series} = {version[len(series):]}\nLINUX_KERNEL_HASH-{version} = {digest}\n")
     return {"commit": commit, "archive": archive, "sha256": digest, "path": str(dest)}
 
 

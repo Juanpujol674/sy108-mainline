@@ -29,9 +29,6 @@ msgstr ""
 msgid "AMBR uplink"
 msgstr ""
 
-msgid "AP frequency request"
-msgstr ""
-
 msgid "APN mode"
 msgstr ""
 
@@ -71,9 +68,6 @@ msgstr ""
 msgid "Apply bands"
 msgstr ""
 
-msgid "Apply frequency settings"
-msgstr ""
-
 msgid "Apply network settings"
 msgstr ""
 
@@ -90,9 +84,6 @@ msgid "Authentication"
 msgstr ""
 
 msgid "Automatic"
-msgstr ""
-
-msgid "Automatic (release AP request)"
 msgstr ""
 
 msgid "Automatic operator selection"
@@ -135,9 +126,6 @@ msgid "Boot policy"
 msgstr ""
 
 msgid "Buffered"
-msgstr ""
-
-msgid "CP frequency request"
 msgstr ""
 
 msgid "CP/NV error"
@@ -215,12 +203,6 @@ msgstr ""
 msgid "DDR clocks"
 msgstr ""
 
-msgid "DDR frequency request"
-msgstr ""
-
-msgid "DDR governor"
-msgstr ""
-
 msgid "Data connection"
 msgstr ""
 
@@ -264,12 +246,6 @@ msgid "Filesystem"
 msgstr ""
 
 msgid "Filesystems"
-msgstr ""
-
-msgid "Firmware DFS"
-msgstr ""
-
-msgid "Firmware also considers CP demand. The actual DDR frequency may exceed the AP request."
 msgstr ""
 
 msgid "Firmware version"
@@ -729,4 +705,14 @@ msgid "Write IMEI"
 msgstr ""
 
 msgid "Yes"
+msgstr ""
+
+
+msgid "Available frequencies"
+msgstr ""
+
+msgid "DDR is managed automatically by firmware. Monitoring only."
+msgstr ""
+
+msgid "Apply CPU frequency settings"
 msgstr ""

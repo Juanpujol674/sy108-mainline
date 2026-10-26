@@ -17,6 +17,7 @@ static int sync_directory(void)
 	close(fd);
 	return rc < 0 ? errorf(CELL_SYSTEM, "Sync receipt directory: %s", strerror(saved)) : 0;
 }
+
 J *receipt_reserve(const char *operation, J *args, J *row, int *result)
 {
 	*result = -1;
@@ -84,6 +85,7 @@ J *receipt_reserve(const char *operation, J *args, J *row, int *result)
 	*result = 0;
 	return NULL;
 }
+
 int receipt_finish(J *row)
 {
 	const char *id = str(row, "request_id");

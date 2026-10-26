@@ -45,6 +45,7 @@ static J *load(void)
 	}
 	return data;
 }
+
 int sms_settings_validate(J *value)
 {
 	const char *const names[] = {"max_count", "max_sent_count", "direct_receive"};
@@ -59,9 +60,10 @@ int sms_settings_validate(J *value)
 		return errorf(CELL_INVALID, "Invalid SMS history limits");
 	return 0;
 }
+
 J *sms_configuration(void)
 {
-	J *sections = uci_sections();
+	J *sections = cell_config_sections();
 	if (!sections)
 		return NULL;
 	J *row = get(sections, "sms"), *value = json_object_new_object();
@@ -86,6 +88,7 @@ fail:
 	errorf(CELL_INVALID, "Invalid SMS configuration");
 	return NULL;
 }
+
 static int save(J *data)
 {
 	J *config = sms_configuration();
@@ -104,6 +107,7 @@ static int save(J *data)
 		return -1;
 	return atomic_json(CELL_STORE "/sms.json", data, true);
 }
+
 struct group {
 	const char *peer;
 	int reference, total;
@@ -111,6 +115,7 @@ struct group {
 	J *row;
 	J *parts[256];
 };
+
 J *sms_inbox(J *rows)
 {
 	size_t n = json_object_array_length(rows), used = 0;
@@ -220,6 +225,7 @@ J *sms_inbox(J *rows)
 	free(groups);
 	return messages;
 }
+
 J *sms_publish(struct controller *c)
 {
 	J *data = load(), *settings = NULL, *inbox = NULL, *value = NULL;
@@ -261,6 +267,7 @@ fail:
 	json_object_put(data);
 	return value;
 }
+
 static int archive(const char *pdu, const char *source, J *index)
 {
 	char *upper = strdup(pdu);
@@ -269,8 +276,10 @@ static int archive(const char *pdu, const char *source, J *index)
 	for (char *s = upper; *s; s++)
 		*s = (char)toupper((unsigned char)*s);
 	char digest[65];
-	sha256_hex(upper, strlen(upper), digest);
+	int hash_error = sha256_hex(upper, strlen(upper), digest);
 	free(upper);
+	if (hash_error)
+		return -1;
 	J *data = load();
 	if (!data)
 		return -1;
@@ -303,6 +312,7 @@ static int archive(const char *pdu, const char *source, J *index)
 	json_object_put(data);
 	return rc;
 }
+
 int sms_configure(struct controller *c, J *settings)
 {
 	J *value = settings ? json_object_get(settings) : sms_configuration();
@@ -330,6 +340,7 @@ int sms_configure(struct controller *c, J *settings)
 	json_object_put(r);
 	return valid ? 0 : errorf(CELL_MODEM, "SMS receive settings readback mismatch");
 }
+
 J *sms_refresh(struct controller *c)
 {
 	J *r = controller_query(c, "AT+CMGF?", 5, "+CMGF:");
@@ -367,8 +378,12 @@ J *sms_refresh(struct controller *c)
 		for (char *s = upper; *s; s++)
 			*s = (char)toupper((unsigned char)*s);
 		char digest[65];
-		sha256_hex(upper, strlen(upper), digest);
+		int hash_error = sha256_hex(upper, strlen(upper), digest);
 		free(upper);
+		if (hash_error) {
+			json_object_put(rows);
+			return NULL;
+		}
 		string(item, "pdu_sha256", digest);
 		json_object_object_del(item, "raw_pdu");
 	}
@@ -388,6 +403,7 @@ J *sms_refresh(struct controller *c)
 	}
 	return value;
 }
+
 int sms_process_events(struct controller *c)
 {
 	J *events = c->transport.sms_events;
@@ -431,6 +447,7 @@ int sms_process_events(struct controller *c)
 	json_object_put(published);
 	return 0;
 }
+
 static int sent_update(struct controller *c, const char *id, J *updates)
 {
 	J *data = load();
@@ -459,6 +476,7 @@ static int sent_update(struct controller *c, const char *id, J *updates)
 	json_object_put(value);
 	return 0;
 }
+
 static int sent_start(struct controller *c, J *args)
 {
 	if (!*c->sms_instance && random_hex(c->sms_instance, 16) < 0)
@@ -495,6 +513,7 @@ static int sent_start(struct controller *c, J *args)
 	json_object_put(value);
 	return 0;
 }
+
 static J *summary(struct controller *c)
 {
 	J *value = sms_publish(c);
@@ -508,6 +527,7 @@ static J *summary(struct controller *c)
 	json_object_put(value);
 	return out;
 }
+
 static bool id_in(J *ids, const char *id)
 {
 	for (size_t i = 0; i < json_object_array_length(ids); i++)
@@ -515,6 +535,7 @@ static bool id_in(J *ids, const char *id)
 			return true;
 	return false;
 }
+
 static J *history_execute(struct controller *c, const char *operation, J *args)
 {
 	if (!strcmp(operation, "sms_history"))
@@ -532,7 +553,7 @@ static J *history_execute(struct controller *c, const char *operation, J *args)
 			json_object_get_int(get(args, "max_sent_count")));
 		string(values, "sms.direct_receive",
 		       json_object_get_boolean(get(args, "direct_receive")) ? "1" : "0");
-		int rc = uci_commit(values, NULL);
+		int rc = cell_config_commit(values, NULL);
 		json_object_put(values);
 		if (rc < 0)
 			goto fail;
@@ -580,6 +601,7 @@ fail:
 	json_object_put(data);
 	return NULL;
 }
+
 int ims_initialize(struct controller *c)
 {
 	const char *commands[] = {"AT+CIREG=2", "AT+IMSEN=1"};
@@ -607,6 +629,7 @@ int ims_initialize(struct controller *c)
 	json_object_object_add(c->status, "ims_initialization", result);
 	return 0;
 }
+
 int ims_refresh(struct controller *c)
 {
 	J *row = controller_query(c, "AT+CIREG?", 5, "+CIREG:");
@@ -615,6 +638,7 @@ int ims_refresh(struct controller *c)
 	json_object_object_add(c->status, "ims", row);
 	return 0;
 }
+
 static J *delete_inbox_message(struct controller *c, J *args)
 {
 	J *data = load();
@@ -666,6 +690,7 @@ static J *delete_inbox_message(struct controller *c, J *args)
 	json_object_put(ids);
 	return ok ? history_execute(c, "sms_delete_history", args) : NULL;
 }
+
 J *sms_execute(struct controller *c, const char *operation, J *args)
 {
 	if (transport_admit(&c->transport) < 0)

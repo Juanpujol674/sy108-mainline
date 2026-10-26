@@ -7,7 +7,7 @@ return network.registerProtocol('udx', {
         return _('UDX710 cellular');
     },
     getIfname : function() {
-        return this._ubus('l3_device') || 'sipa_eth0';
+        return this._ubus('l3_device') || 'wwan0';
     },
     getPackageName : function() {
         return 'udx-cellular';
@@ -26,8 +26,8 @@ return network.registerProtocol('udx', {
     },
     renderFormOptions : function(section) {
         var device = section.taboption('general', form.ListValue, 'device', _('Device'));
-        device.value('sipa_eth0', 'sipa_eth0');
-        device.default = 'sipa_eth0';
+        device.value('wwan0', 'wwan0');
+        device.default = 'wwan0';
         device.rmempty = false;
         var info = section.taboption('general', form.DummyValue, '_cellular_settings',
                                      _('Cellular settings'));

@@ -1,15 +1,13 @@
 #!/bin/sh
 # Shared implementation; tests source this library and replace only filesystem
 # primitives. Production entry points always use the fixed paths below.
-UDX_UDC=29100000.dwc3
+UDX_UDC=29100000.usb
 UDX_CF=/sys/kernel/config/usb_gadget
 UDX_G=$UDX_CF/udx-usb
 UDX_RUN=/run/udx-usb
 UDX_UDC_CLASS=/sys/class/udc
 UDX_NET_CLASS=/sys/class/net
 UDX_SHADOW=/etc/shadow
-UDX_READY_PROC=/proc
-UDX_READY_LOG=/dev/log
 UDX_IDENTITY_CMDLINE=/proc/cmdline
 UDX_AFFINITY_PROC=/proc
 UDX_AFFINITY_SYS=/sys
@@ -159,135 +157,19 @@ g_identity_defaults() {
 }
 
 # /proc/uptime is monotonic and does not depend on RTC/NTP or logd.
-g_ready_clock() {
+g_boot_clock() {
 	local value rest fraction
-	read -r value rest < "$UDX_READY_PROC/uptime" || return 1
+	read -r value rest < /proc/uptime || return 1
 	fraction=${value#*.}
 	fraction=${fraction#0}
 	G_NOW_CS=$(( ${value%.*} * 100 + ${fraction:-0} ))
 }
 
 g_boot_mark() {
-	g_ready_clock || return 0
+	g_boot_clock || return 0
 	local message="udx-usb: uptime_cs=$G_NOW_CS $*"
 	printf '%s\n' "$message" >> "$UDX_RUN/boot-timing"
 	[ ! -w /dev/kmsg ] || printf '<14>%s\n' "$message" > /dev/kmsg || true
-}
-
-g_ready_budget() {
-	g_ready_clock && [ "$G_NOW_CS" -lt "$G_READY_DEADLINE" ]
-}
-
-g_ready_log() {
-	local pid
-	[ -S "$UDX_READY_LOG" ] || return 1
-	for pid in $(pidof logd); do
-		[ "$(readlink "$UDX_READY_PROC/$pid/exe")" = /sbin/logd ] && return 0
-	done
-	return 1
-}
-
-g_ready_network() {
-	local status address mask
-	# ubus has its own one-second timeout. Never start it with less than
-	# one second left in the overall five-second deadline.
-	g_ready_clock || return 1
-	[ "$((G_READY_DEADLINE - G_NOW_CS))" -ge 100 ] || return 2
-	status=$(ubus -t 1 call network.interface.usbmgmt status 2>/dev/null) || return 1
-	[ "$(jsonfilter -s "$status" -e '@.up')" = true ] || return 1
-	[ "$(jsonfilter -s "$status" -e '@.l3_device')" = br-usb ] || return 1
-	[ "$(jsonfilter -s "$status" -e '@.proto')" = static ] || return 1
-	address=$(jsonfilter -s "$status" -e '@["ipv4-address"][0].address')
-	mask=$(jsonfilter -s "$status" -e '@["ipv4-address"][0].mask')
-	[ "$address" = "$G_READY_IP" ] || return 1
-	case "$mask" in ''|*[!0-9]*) return 1;; esac
-	[ "$mask" -ge 1 ] && [ "$mask" -le 30 ] || return 1
-	G_READY_PREFIX=$mask
-}
-
-g_ready_pool() {
-	# Inspect the generated file visible inside this exact dnsmasq's jail.
-	# A newly replaced host file is not evidence that the old process has it.
-	awk -v ip="$G_READY_IP" -v prefix="$G_READY_PREFIX" '
-	function ipv4(s, a,n,i,v) {
-	 n=split(s,a,"."); if(n!=4) return -1; v=0;
-	 for(i=1;i<=4;i++){if(a[i]!~/^[0-9]+$/ || a[i]>255)return -1;v=v*256+a[i]}
-	 return v;
-	}
-	BEGIN { addr=ipv4(ip); span=2^(32-prefix); net=int(addr/span)*span; mask=2^32-span }
-	/^[[:space:]]*(#|$)/ {next}
-	/^interface=/ {interfaces++; if($0=="interface=br-usb") bridge=1}
-	/^(no-dhcp-interface|except-interface)=(br-usb|\*)$/ {deny=1}
-	/^dhcp-ignore=(tag:)?usbmgmt$/ {deny=1}
-	/^dhcp-range=set:usbmgmt,/ {
-	 n=split(substr($0,12),a,","); ranges++;
-	 lo=ipv4(a[2]); hi=ipv4(a[3]); actualmask=ipv4(a[4]);
-	 if(n!=5 || lo<=net || hi>=net+span-1 || lo>hi || actualmask!=mask ||
-	    (addr>=lo && addr<=hi) || a[5]=="") invalid=1;
-	}
-	END {exit !(addr>=0 && ranges==1 && !invalid && !deny && (!interfaces || bridge))}
-	' "$1"
-}
-
-g_ready_dnsmasq() {
-	local pid cfg inode fd link inodes
-	G_READY_REASON=dnsmasq-not-running
-	for pid in $(pidof dnsmasq); do
-		g_ready_budget || return 1
-		[ "$(readlink "$UDX_READY_PROC/$pid/exe")" = /usr/sbin/dnsmasq ] || continue
-		cfg=$(tr '\000' '\n' < "$UDX_READY_PROC/$pid/cmdline" | awk 'previous=="-C" {print;exit} {previous=$0}')
-		case "$cfg" in /var/etc/dnsmasq.conf.*) ;; *) continue;; esac
-		G_READY_REASON=management-pool-not-ready
-		g_ready_pool "$UDX_READY_PROC/$pid/root$cfg" 2>/dev/null || continue
-		G_READY_REASON=dhcp-socket-not-ready
-		inodes=$(awk -v ip="$G_READY_IP" 'BEGIN {split(ip,a,"."); localip=sprintf("%02X%02X%02X%02X:0043",a[4],a[3],a[2],a[1])}
-		 ($2=="00000000:0043" || $2==localip) && $4=="07" {print $10}' "$UDX_READY_PROC/$pid/net/udp")
-		for fd in "$UDX_READY_PROC/$pid"/fd/*; do
-			g_ready_budget || return 1
-			link=$(readlink "$fd") || continue
-			for inode in $inodes; do
-				[ "$link" = "socket:[$inode]" ] && return 0
-			done
-		done
-	done
-	return 1
-}
-
-g_ready_once() {
-	local error
-	g_ready_log || { G_READY_REASON=logd-not-ready; return 1; }
-	if g_ready_network; then :; else
-		error=$?
-		# Running out of query budget says nothing about the interface.
-		# Preserve the last dependency actually observed to be missing.
-		[ "$error" = 2 ] || G_READY_REASON=management-ip-not-ready
-		return 1
-	fi
-	g_ready_dnsmasq || return 1
-	G_READY_REASON=ready
-}
-
-g_prebind_wait() {
-	local result=timeout
-	G_READY_REASON=clock-unavailable
-	if g_ready_clock; then
-		G_READY_DEADLINE=$((G_NOW_CS + 500))
-		G_READY_IP=$(uci -q get network.usbmgmt.ipaddr)
-		g_boot_mark 'event=prebind-wait'
-		while g_ready_budget; do
-			if g_ready_once && g_ready_budget; then result=ready; break; fi
-			g_ready_clock || break
-			[ "$((G_READY_DEADLINE - G_NOW_CS))" -ge 100 ] || break
-			# The shipped BusyBox sleep accepts integer seconds only.
-			sleep 1 || { G_READY_REASON=sleep-failed; break; }
-		done
-	fi
-	[ "$result" != timeout ] || [ "$G_READY_REASON" != ready ] || G_READY_REASON=deadline-expired
-	printf 'dhcp_readiness=%s\ndhcp_reason=%s\n' "$result" "$G_READY_REASON" > "$UDX_RUN/network-readiness"
-	g_boot_mark "event=prebind-$result reason=$G_READY_REASON"
-	[ "$result" = ready ] || g_error "DHCP readiness timeout: $G_READY_REASON; binding USB for diagnostics"
-	# A DHCP failure must never suppress the only IPv6/ACM management link.
-	return 0
 }
 
 g_load_config() {
@@ -356,7 +238,7 @@ g_console_reason() {
 
 g_preflight() {
 	g_validate || return $?
-	[ -d "$UDX_UDC_CLASS/$UDX_UDC" ] || { g_error 'expected Device controller 29100000.dwc3 is absent'; return 1; }
+	[ -d "$UDX_UDC_CLASS/$UDX_UDC" ] || { g_error 'expected Device controller 29100000.usb is absent'; return 1; }
 	[ -d "$UDX_CF" ] || { g_error 'configfs usb_gadget is unavailable'; return 1; }
 	if [ "$ACM" = 1 ]; then
 		local reason
@@ -437,9 +319,6 @@ g_create() {
 		fi
 		g_link "$UDX_G/functions/acm.maint" "$UDX_G/configs/c.1/acm.maint" || return 1
 	fi
-	# bridge_empty permits IP and DHCP readiness without a USB netdev or
-	# host carrier. The deadline cannot depend on services later in rcS.
-	g_prebind_wait
 	g_affinity_apply || g_error 'CPU affinity unavailable; retaining default scheduling'
 	g_boot_mark 'event=udc-bind-begin'
 	# Bind once after the complete, deterministic descriptor tree exists.
@@ -501,6 +380,20 @@ g_state_load() {
 	g_validate
 }
 
+# Called under the same control lock as profile changes and teardown.
+g_reset() {
+	[ -d "$UDX_G" ] || return 0
+	[ "$(g_read "$UDX_G/UDC")" = "$UDX_UDC" ] || {
+		g_error 'MCU reset requires the managed gadget to be bound'; return 1;
+	}
+	local result=0
+	g_write "$UDX_UDC_CLASS/$UDX_UDC/soft_connect" disconnect || result=1
+	sleep 0.5 || result=1
+	# Preserve one connect attempt even if the disconnect reported an error.
+	g_write "$UDX_UDC_CLASS/$UDX_UDC/soft_connect" connect || result=1
+	return "$result"
+}
+
 g_status() {
 	local reason bound=none state=absent speed=unknown
 	[ ! -f "$UDX_RUN/applied" ] || cat "$UDX_RUN/applied"
@@ -512,5 +405,8 @@ g_status() {
 	printf 'console_auth=%s\n' "$reason"
 	[ ! -f "$UDX_RUN/pending" ] || { printf 'pending='; cat "$UDX_RUN/pending"; }
 	[ ! -f "$UDX_RUN/last-result" ] || cat "$UDX_RUN/last-result"
-	[ ! -f "$UDX_RUN/network-readiness" ] || cat "$UDX_RUN/network-readiness"
+	local readiness
+	readiness=$(/usr/libexec/udx-usb-ready 2>/dev/null) || true
+	printf '%s\n' "${readiness:-dhcp_readiness=not-ready
+dhcp_reason=query-failed}"
 }

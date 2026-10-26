@@ -14,8 +14,8 @@
 #define CPU DEVICE_ROOT "/sys/devices/system/cpu/cpufreq/policy0/"
 #define DDR DEVICE_ROOT "/sys/class/devfreq/scene-frequency/"
 #define LOCK DEVICE_ROOT "/run/udx-frequency.lock"
-static const char *keys_list[] = {"cpu_governor", "cpu_min_khz", "cpu_max_khz", "ddr_governor",
-				  "ddr_frequency_hz"};
+static const char *keys_list[] = {"cpu_governor", "cpu_min_khz", "cpu_max_khz"};
+
 static char *read_value(const char *path)
 {
 	char *s = read_text(path, 4096, true);
@@ -26,6 +26,7 @@ static char *read_value(const char *path)
 	}
 	return s;
 }
+
 static void number(J *row, const char *key, const char *path)
 {
 	char *s = read_value(path);
@@ -36,12 +37,14 @@ static void number(J *row, const char *key, const char *path)
 		json_object_object_add(row, key, NULL);
 	free(s);
 }
+
 static void value(J *row, const char *key, const char *path)
 {
 	char *s = read_value(path);
 	string(row, key, s);
 	free(s);
 }
+
 static void choices(J *row, const char *key, const char *path, bool numeric)
 {
 	char *s = read_value(path), *save = NULL;
@@ -57,6 +60,7 @@ static void choices(J *row, const char *key, const char *path, bool numeric)
 	free(s);
 	json_object_object_add(row, key, list);
 }
+
 J *frequency_status(void)
 {
 	J *out = json_object_new_object(), *cpu = json_object_new_object();
@@ -67,21 +71,16 @@ J *frequency_status(void)
 	number(cpu, "current_khz", CPU "scaling_cur_freq");
 	choices(cpu, "governors", CPU "scaling_available_governors", false);
 	choices(cpu, "frequencies_khz", CPU "scaling_available_frequencies", true);
-	value(ddr, "governor", DDR "governor");
-	number(ddr, "min_hz", DDR "min_freq");
-	number(ddr, "max_hz", DDR "max_freq");
 	number(ddr, "current_hz", DDR "cur_freq");
-	number(ddr, "requested_hz", DDR "device/ap_vote_hz");
-	number(ddr, "cp_vote_hz", DDR "device/cp_vote_hz");
-	choices(ddr, "governors", DDR "available_governors", false);
 	choices(ddr, "frequencies_hz", DDR "available_frequencies", true);
+	boolean(ddr, "available", get(ddr, "current_hz") != NULL);
 	json_object_object_add(out, "cpu", cpu);
 	json_object_object_add(out, "ddr", ddr);
 	boolean(out, "available",
-		get(cpu, "min_khz") && get(cpu, "max_khz") && get(ddr, "requested_hz") &&
-		    str(cpu, "governor") && str(ddr, "governor"));
+		get(cpu, "min_khz") && get(cpu, "max_khz") && str(cpu, "governor"));
 	return out;
 }
+
 static bool contains(J *list, J *wanted)
 {
 	for (size_t i = 0; i < json_object_array_length(list); i++)
@@ -89,6 +88,7 @@ static bool contains(J *list, J *wanted)
 			return true;
 	return false;
 }
+
 static int set(const char *path, const char *text)
 {
 	int fd = open(path, O_WRONLY | O_TRUNC | O_CLOEXEC | O_NOFOLLOW);
@@ -101,12 +101,14 @@ static int set(const char *path, const char *text)
 		   ? 0
 		   : errorf(CELL_SYSTEM, "Write frequency setting: %s", strerror(saved));
 }
+
 static int set_number(const char *path, int64_t n)
 {
 	char text[32];
 	snprintf(text, sizeof(text), "%" PRId64 "\n", n);
 	return set(path, text);
 }
+
 static int cpu_set(const char *governor, int64_t minimum, int64_t maximum, int64_t old_max)
 {
 	if (minimum > old_max) {
@@ -118,23 +120,15 @@ static int cpu_set(const char *governor, int64_t minimum, int64_t maximum, int64
 		return -1;
 	return set(CPU "scaling_governor", governor);
 }
-static int ddr_set(const char *governor, int64_t requested)
+
+static bool matches(J *current, const char *governor, int64_t minimum, int64_t maximum)
 {
-	if (set(DDR "governor", governor))
-		return -1;
-	return set_number(requested ? DDR "userspace/set_freq" : DDR "device/ap_vote_hz",
-			  requested);
-}
-static bool matches(J *current, const char *cpu_gov, int64_t minimum, int64_t maximum,
-		    const char *ddr_gov, int64_t requested)
-{
-	J *cpu = get(current, "cpu"), *ddr = get(current, "ddr");
-	return text_equal(str(cpu, "governor"), cpu_gov) &&
+	J *cpu = get(current, "cpu");
+	return text_equal(str(cpu, "governor"), governor) &&
 	       json_object_get_int64(get(cpu, "min_khz")) == minimum &&
-	       json_object_get_int64(get(cpu, "max_khz")) == maximum &&
-	       text_equal(str(ddr, "governor"), ddr_gov) && get(ddr, "requested_hz") &&
-	       json_object_get_int64(get(ddr, "requested_hz")) == requested;
+	       json_object_get_int64(get(cpu, "max_khz")) == maximum;
 }
+
 static int save(J *args)
 {
 	char batch[1024];
@@ -143,12 +137,9 @@ static int save(J *args)
 			 "set udx-hardware.clocks.cpu_governor='%s'\n"
 			 "set udx-hardware.clocks.cpu_min_khz='%" PRId64 "'\n"
 			 "set udx-hardware.clocks.cpu_max_khz='%" PRId64 "'\n"
-			 "set udx-hardware.clocks.ddr_governor='%s'\n"
-			 "set udx-hardware.clocks.ddr_frequency_hz='%" PRId64 "'\n"
 			 "commit udx-hardware\n",
 			 str(args, "cpu_governor"), json_object_get_int64(get(args, "cpu_min_khz")),
-			 json_object_get_int64(get(args, "cpu_max_khz")), str(args, "ddr_governor"),
-			 json_object_get_int64(get(args, "ddr_frequency_hz")));
+			 json_object_get_int64(get(args, "cpu_max_khz")));
 	if (n < 0 || n >= (int)sizeof(batch))
 		return errorf(CELL_INVALID, "Frequency configuration too large");
 	const char *argv[] = {"/sbin/uci", "-q", "batch", NULL};
@@ -164,6 +155,7 @@ static int save(J *args)
 	}
 	return 0;
 }
+
 J *frequency_apply(J *args, bool persist)
 {
 	int lock = open(LOCK, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
@@ -173,35 +165,25 @@ J *frequency_apply(J *args, bool persist)
 		errorf(CELL_SYSTEM, "Frequency settings are busy");
 		return NULL;
 	}
-	J *before = frequency_status(), *cpu = get(before, "cpu"), *ddr = get(before, "ddr");
+	J *before = frequency_status(), *cpu = get(before, "cpu");
 	J *out = NULL, *after = NULL;
 	int64_t minimum = json_object_get_int64(get(args, "cpu_min_khz"));
 	int64_t maximum = json_object_get_int64(get(args, "cpu_max_khz"));
-	int64_t requested = json_object_get_int64(get(args, "ddr_frequency_hz"));
-	const char *cpu_gov = str(args, "cpu_governor"), *ddr_gov = str(args, "ddr_governor");
-	if (!keys(args, keys_list, 5) || json_object_object_length(args) != 5 ||
+	const char *cpu_gov = str(args, "cpu_governor");
+	if (!keys(args, keys_list, 3) || json_object_object_length(args) != 3 ||
 	    !json_object_get_boolean(get(before, "available")) ||
 	    !json_object_is_type(get(args, "cpu_min_khz"), json_type_int) ||
 	    !json_object_is_type(get(args, "cpu_max_khz"), json_type_int) ||
-	    !json_object_is_type(get(args, "ddr_frequency_hz"), json_type_int) ||
 	    !contains(get(cpu, "governors"), get(args, "cpu_governor")) ||
 	    !contains(get(cpu, "frequencies_khz"), get(args, "cpu_min_khz")) ||
-	    !contains(get(cpu, "frequencies_khz"), get(args, "cpu_max_khz")) || minimum > maximum ||
-	    !text_equal(ddr_gov, "userspace") ||
-	    !contains(get(ddr, "governors"), get(args, "ddr_governor")) || requested < 0 ||
-	    (requested && (!contains(get(ddr, "frequencies_hz"), get(args, "ddr_frequency_hz")) ||
-			   requested < json_object_get_int64(get(ddr, "min_hz")) ||
-			   requested > json_object_get_int64(get(ddr, "max_hz"))))) {
-		errorf(
-		    CELL_INVALID,
-		    "Choose supported governors and frequencies; minimum must not exceed maximum");
+	    !contains(get(cpu, "frequencies_khz"), get(args, "cpu_max_khz")) || minimum > maximum) {
+		errorf(CELL_INVALID, "Choose a supported CPU governor and frequencies; minimum "
+				     "must not exceed maximum");
 		goto done;
 	}
 	int rc = cpu_set(cpu_gov, minimum, maximum, json_object_get_int64(get(cpu, "max_khz")));
-	if (!rc)
-		rc = ddr_set(ddr_gov, requested);
 	after = frequency_status();
-	if (!rc && !matches(after, cpu_gov, minimum, maximum, ddr_gov, requested))
+	if (!rc && !matches(after, cpu_gov, minimum, maximum))
 		rc = errorf(CELL_SYSTEM, "Frequency request readback mismatch");
 	if (!rc && persist)
 		rc = save(args);
@@ -218,18 +200,13 @@ J *frequency_apply(J *args, bool persist)
 		    cpu_set(str(cpu, "governor"), json_object_get_int64(get(cpu, "min_khz")),
 			    json_object_get_int64(get(cpu, "max_khz")),
 			    json_object_get_int64(get(get(after, "cpu"), "max_khz")));
-		int undo_ddr =
-		    ddr_set(str(ddr, "governor"), json_object_get_int64(get(ddr, "requested_hz")));
 		out = frequency_status();
 		boolean(out, "accepted", false);
 		string(out, "error", error);
 		boolean(out, "rollback_verified",
-			!undo_cpu && !undo_ddr &&
-			    matches(out, str(cpu, "governor"),
-				    json_object_get_int64(get(cpu, "min_khz")),
-				    json_object_get_int64(get(cpu, "max_khz")),
-				    str(ddr, "governor"),
-				    json_object_get_int64(get(ddr, "requested_hz"))));
+			!undo_cpu && matches(out, str(cpu, "governor"),
+					     json_object_get_int64(get(cpu, "min_khz")),
+					     json_object_get_int64(get(cpu, "max_khz"))));
 	}
 done:
 	json_object_put(before);
@@ -237,6 +214,7 @@ done:
 	close(lock);
 	return out;
 }
+
 static char *config(const char *key)
 {
 	char name[128];
@@ -251,6 +229,7 @@ static char *config(const char *key)
 		out[strcspn(out, "\r\n")] = 0;
 	return out;
 }
+
 int frequency_restore(void)
 {
 	char *enabled = config("enabled");
@@ -259,10 +238,10 @@ int frequency_restore(void)
 	if (!run)
 		return 0;
 	J *args = json_object_new_object();
-	for (size_t i = 0; i < 5; i++) {
+	for (size_t i = 0; i < 3; i++) {
 		char *s = config(keys_list[i]);
 		int64_t n;
-		if (i == 0 || i == 3)
+		if (i == 0)
 			string(args, keys_list[i], s);
 		else if (s && integer_text(s, 0, INT64_MAX, &n))
 			integer(args, keys_list[i], n);

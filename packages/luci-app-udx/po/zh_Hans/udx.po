@@ -30,9 +30,6 @@ msgstr "AMBR 下行速率"
 msgid "AMBR uplink"
 msgstr "AMBR 上行速率"
 
-msgid "AP frequency request"
-msgstr "AP 请求频率"
-
 msgid "APN mode"
 msgstr "APN 模式"
 
@@ -72,9 +69,6 @@ msgstr "应用 USB 组合"
 msgid "Apply bands"
 msgstr "应用频段"
 
-msgid "Apply frequency settings"
-msgstr "应用频率设置"
-
 msgid "Apply network settings"
 msgstr "应用网络设置"
 
@@ -92,9 +86,6 @@ msgstr "认证"
 
 msgid "Automatic"
 msgstr "自动"
-
-msgid "Automatic (release AP request)"
-msgstr "自动（撤销 AP 请求）"
 
 msgid "Automatic operator selection"
 msgstr "自动选网"
@@ -137,9 +128,6 @@ msgstr "启动策略"
 
 msgid "Buffered"
 msgstr "缓冲区"
-
-msgid "CP frequency request"
-msgstr "CP 请求频率"
 
 msgid "CP/NV error"
 msgstr "CP/NV 错误"
@@ -216,12 +204,6 @@ msgstr "当前网络"
 msgid "DDR clocks"
 msgstr "DDR 时钟"
 
-msgid "DDR frequency request"
-msgstr "DDR 请求频率"
-
-msgid "DDR governor"
-msgstr "DDR 调频策略"
-
 msgid "Data connection"
 msgstr "数据连接"
 
@@ -266,12 +248,6 @@ msgstr "文件系统"
 
 msgid "Filesystems"
 msgstr "文件系统"
-
-msgid "Firmware DFS"
-msgstr "固件动态调频"
-
-msgid "Firmware also considers CP demand. The actual DDR frequency may exceed the AP request."
-msgstr "固件会同时考虑基带需求，DDR 实际频率可能高于 AP 请求值。"
 
 msgid "Firmware version"
 msgstr "固件版本"
@@ -731,3 +707,13 @@ msgstr "写入 IMEI"
 
 msgid "Yes"
 msgstr "是"
+
+
+msgid "Available frequencies"
+msgstr "支持的频率"
+
+msgid "DDR is managed automatically by firmware. Monitoring only."
+msgstr "DDR 由固件自动调频，此处仅显示监测数据。"
+
+msgid "Apply CPU frequency settings"
+msgstr "应用 CPU 频率设置"

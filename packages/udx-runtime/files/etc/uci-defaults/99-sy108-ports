@@ -9,7 +9,7 @@ import { readfile } from "fs";
 let board = json(readfile("/etc/board.json"));
 board.network = { lan: { device: "uncm0", protocol: "none" } };
 if (readfile("/etc/udx-openwrt-root") != null)
-	board.network.wan = { device: "sipa_eth0", protocol: "udx" };
+	board.network.wan = { device: "wwan0", protocol: "udx" };
 printf("%J\n", board);
 ' > "$path"
 chmod 644 "$path"

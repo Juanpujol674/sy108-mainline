@@ -15,14 +15,14 @@ define Package/udx-upgrade
  SECTION:=admin
  CATEGORY:=Administration
  TITLE:=SY108 platform upgrade support
- DEPENDS:=+udx-runtime +fwtool +libfdt +ubi-utils +fstools
+ DEPENDS:=+udx-runtime +fwtool +libubus +libubox +libuci +libfdt +ubi-utils +fstools
 endef
 
 define Build/Compile
 	$(TARGET_CC) $(TARGET_CPPFLAGS) $(TARGET_CFLAGS) -std=c11 -Os -Wall -Wextra \
 	 -I$(PKG_BUILD_DIR)/components/boot-format -I$(PKG_BUILD_DIR)/components/system \
-	 $(PKG_BUILD_DIR)/packages/udx-upgrade/src/boot-state.c $(PKG_BUILD_DIR)/components/boot-format/misc-state.c \
-	 $(TARGET_LDFLAGS) -o $(PKG_BUILD_DIR)/udx-boot-state
+	 $(PKG_BUILD_DIR)/packages/udx-upgrade/src/boot-state.c $(PKG_BUILD_DIR)/packages/udx-upgrade/src/management-ready.c $(PKG_BUILD_DIR)/components/boot-format/misc-state.c \
+	 $(TARGET_LDFLAGS) -lubus -lubox -luci -o $(PKG_BUILD_DIR)/udx-boot-state
 	$(TARGET_CC) $(TARGET_CPPFLAGS) $(TARGET_CFLAGS) -std=c11 -Os -Wall -Wextra \
 	 -I$(PKG_BUILD_DIR)/components/boot-format \
 	 $(PKG_BUILD_DIR)/packages/udx-upgrade/src/image-check.c $(PKG_BUILD_DIR)/components/boot-format/capsule.c \

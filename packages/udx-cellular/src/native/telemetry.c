@@ -1,4 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0-only Low-priority queries share the sole AT owner. */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Low-priority queries share the sole AT owner. */
 #include "cellular.h"
 #include <string.h>
 #include <stdio.h>
@@ -12,10 +13,12 @@ _Static_assert(sizeof(operations) / sizeof(*operations) == CELL_TELEMETRY_TASKS,
 	       "telemetry task count");
 _Static_assert(sizeof(intervals) / sizeof(*intervals) == CELL_TELEMETRY_TASKS,
 	       "telemetry interval count");
+
 static bool paused(void)
 {
 	return !access(CELL_RUN "/telemetry-paused", F_OK);
 }
+
 int telemetry_publish(struct controller *c)
 {
 	J *state = get(c->status, "telemetry");
@@ -29,6 +32,7 @@ int telemetry_publish(struct controller *c)
 	string(state, "transport", "single-owner-command-boundary-priority");
 	return changed ? controller_publish(c) : 0;
 }
+
 int telemetry_step(struct controller *c)
 {
 	if (telemetry_publish(c) < 0)

@@ -27,3 +27,12 @@ msgstr "重启进入主系统"
 msgid "Reboot into Recovery"
 msgstr "重启进入 Recovery"
 
+
+msgid "System maintenance"
+msgstr "系统维护"
+
+msgid "Switch system"
+msgstr "切换系统"
+
+msgid "There are unsaved changes. Rebooting will discard them."
+msgstr "存在未保存的更改，重启将丢弃这些更改。"

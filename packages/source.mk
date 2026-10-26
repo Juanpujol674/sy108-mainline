@@ -7,5 +7,5 @@ PKG_FILE_DEPENDS += $(addprefix $(SY108_PROJECT_DIR)/,$(SY108_SOURCE_PATHS))
 
 define SY108/Prepare
 	$(INSTALL_DIR) $(1)
-	set -e; $(foreach path,$(SY108_SOURCE_PATHS),$(INSTALL_DIR) $(1)/$(dir $(path)); $(CP) $(SY108_PROJECT_DIR)/$(path) $(1)/$(dir $(path));)
+	set -e; $(foreach path,$(SY108_SOURCE_PATHS),$(INSTALL_DIR) $(1)/$(dir $(path)); rsync -a --exclude=.DS_Store --exclude=__pycache__ --exclude='*.pyc' --exclude='*.pyo' --exclude=.git $(SY108_PROJECT_DIR)/$(path) $(1)/$(dir $(path));)
 endef

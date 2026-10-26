@@ -45,7 +45,6 @@ static const struct operation operations[] = {
     {"nr_capability", 4, {"mode"}, 1},
     {"physical_slot", 4, {"slot"}, 1},
     {"policy", 0, {"automatic_connect", "roaming"}, 2},
-    {"quiesce", 0, {NULL}, 0},
     {"radio", 0, {"enabled"}, 1},
     {"radio_options", 4, {NULL}, 0},
     {"refresh", 0, {NULL}, 0},
@@ -60,6 +59,7 @@ static const struct operation operations[] = {
     {"status", 0, {NULL}, 0},
     {"operation_status", 0, {"id", "boot_id", "broker_id"}, 3},
     {"unlock", 1, {"scope"}, 1}};
+
 static const struct operation *lookup(const char *name)
 {
 	for (size_t i = 0; i < sizeof(operations) / sizeof(*operations); i++)
@@ -67,14 +67,15 @@ static const struct operation *lookup(const char *name)
 			return &operations[i];
 	return NULL;
 }
+
 J *controller_operations(void)
 {
 	J *out = json_object_new_array();
 	for (size_t i = 0; i < sizeof(operations) / sizeof(*operations); i++)
-		if (strcmp(operations[i].name, "quiesce"))
-			json_object_array_add(out, json_object_new_string(operations[i].name));
+		json_object_array_add(out, json_object_new_string(operations[i].name));
 	return out;
 }
+
 int controller_validate(const char *name, J *args)
 {
 	const struct operation *op = lookup(name);
@@ -166,6 +167,7 @@ int controller_validate(const char *name, J *args)
 	}
 	return 0;
 }
+
 J *controller_config(void)
 {
 	const char *names[] = {
@@ -174,7 +176,7 @@ J *controller_config(void)
 	    "network_mode", "nr_capability", "radio_enabled"};
 	const char *defaults[] = {"",	  "IPV4V6", "1", "1", "0",	"", "",
 				  "none", "auto",   "0", "",  "sa_nsa", "1"};
-	J *sections = uci_sections();
+	J *sections = cell_config_sections();
 	if (!sections)
 		return NULL;
 	J *row = get(sections, "modem"), *out = json_object_new_object();
@@ -220,11 +222,11 @@ fail:
 	json_object_put(out);
 	return NULL;
 }
+
 int controller_init(struct controller *c)
 {
 	memset(c, 0, sizeof(*c));
-	c->transport.fd = c->transport.urc_fd = c->transport.lock_fd = c->transport.owner.pidfd =
-	    -1;
+	c->transport.fd = c->transport.urc_fd = c->transport.lock_fd = -1;
 	c->config = controller_config();
 	if (!c->config)
 		return -1;
@@ -233,6 +235,7 @@ int controller_init(struct controller *c)
 		return -1;
 	return 0;
 }
+
 void controller_destroy(struct controller *c)
 {
 	transport_close(&c->transport);
@@ -242,6 +245,7 @@ void controller_destroy(struct controller *c)
 	json_object_put(c->data);
 	c->config = c->status = c->data = NULL;
 }
+
 J *controller_profile(struct controller *c)
 {
 	J *p = json_object_new_object();
@@ -251,16 +255,19 @@ J *controller_profile(struct controller *c)
 	integer(p, "cid", 1);
 	return p;
 }
+
 static bool registered(struct controller *c)
 {
 	return json_object_get_boolean(get(get(c->status, "registration"), "registered")) ||
 	       json_object_get_boolean(get(get(c->status, "nr_registration"), "registered"));
 }
+
 static bool roaming(struct controller *c)
 {
 	return json_object_get_boolean(get(get(c->status, "registration"), "roaming")) ||
 	       json_object_get_boolean(get(get(c->status, "nr_registration"), "roaming"));
 }
+
 int controller_publish(struct controller *c)
 {
 	const char *state =
@@ -288,16 +295,9 @@ int controller_publish(struct controller *c)
 	json_object_object_add(c->status, "auth", apn_public_auth(c->config));
 	string(c->status, "apn_mode", str(c->config, "apn_mode"));
 	json_object_object_add(c->status, "supported_operations", controller_operations());
-	if (atomic_json(CELL_RUN "/cellular-status.json", c->status, false) < 0)
-		return -1;
-	J *data = json_object_new_object();
-	string(data, "boot_id", c->transport.boot);
-	real(data, "uptime", mono());
-	json_object_object_add(data, "session", json_object_get(c->data));
-	int rc = atomic_json(CELL_RUN "/cellular-data.json", data, false);
-	json_object_put(data);
-	return rc;
+	return c->publish_state ? c->publish_state(c->service_context, c->status) : 0;
 }
+
 int controller_set_data(struct controller *c, J *session)
 {
 	J *old = c->data;
@@ -305,6 +305,7 @@ int controller_set_data(struct controller *c, J *session)
 	json_object_put(old);
 	return controller_publish(c);
 }
+
 char *controller_at(struct controller *c, const char *command, double seconds)
 {
 	if (c->background && c->foreground_pending &&
@@ -327,6 +328,7 @@ char *controller_at(struct controller *c, const char *command, double seconds)
 	}
 	return transport_command(&c->transport, command, seconds, NULL, false);
 }
+
 J *controller_query(struct controller *c, const char *command, double seconds, const char *prefix)
 {
 	char *raw = controller_at(c, command, seconds);
@@ -336,6 +338,7 @@ J *controller_query(struct controller *c, const char *command, double seconds, c
 	free(raw);
 	return row;
 }
+
 static int query_int(struct controller *c, const char *command, double timeout, const char *prefix,
 		     int64_t max, int *value)
 {
@@ -352,6 +355,7 @@ static int query_int(struct controller *c, const char *command, double timeout, 
 	*value = (int)n;
 	return 0;
 }
+
 static int command(struct controller *c, const char *text, double timeout)
 {
 	char *raw = controller_at(c, text, timeout);
@@ -360,28 +364,14 @@ static int command(struct controller *c, const char *text, double timeout)
 	free(raw);
 	return 0;
 }
+
 static int network_release(struct controller *c, const char *id)
 {
 	if (!id)
 		return 0;
-	double end = mono() + 8;
-	while (mono() < end) {
-		J *row = read_json(CELL_RUN "/cellular-netifd.json", 65536);
-		if (!row) {
-			if (errno == ENOENT)
-				return 0;
-			return -1;
-		}
-		bool released = !text_equal(str(row, "boot_id"), c->transport.boot) ||
-				(!text_equal(str(row, "session_id"), id) &&
-				 !json_object_get_boolean(get(row, "error")));
-		json_object_put(row);
-		if (released)
-			return 0;
-		delay_ms(50);
-	}
-	return errorf(CELL_SYSTEM, "netifd did not retire the old data session");
+	return c->retire_network ? c->retire_network(c->service_context) : 0;
 }
+
 J *controller_disconnect(struct controller *c, bool quiesce)
 {
 	char *old = c->data && str(c->data, "id") ? strdup(str(c->data, "id")) : NULL;
@@ -393,7 +383,7 @@ J *controller_disconnect(struct controller *c, bool quiesce)
 		return NULL;
 	string(c->status, "pdp_state", "unknown");
 	char at_error[512] = "";
-	if (!c->transport.poisoned) {
+	if (!c->transport.poisoned && !atomic_load(&c->transport.stopping)) {
 		char *raw = controller_at(c, "AT+CGACT?", 5);
 		int active = raw ? bearer_active(raw) : -1;
 		free(raw);
@@ -420,6 +410,7 @@ J *controller_disconnect(struct controller *c, bool quiesce)
 		string(result, "at_error", at_error);
 	return result;
 }
+
 char *controller_sim(struct controller *c)
 {
 	J *row = controller_query(c, "AT+CPIN?", 8, "+CPIN:");
@@ -437,6 +428,7 @@ char *controller_sim(struct controller *c)
 		errorf(CELL_INVALID, "SIM state is missing");
 	return result;
 }
+
 static int sim_refresh(struct controller *c)
 {
 	char *state = controller_sim(c);
@@ -459,6 +451,7 @@ static int sim_refresh(struct controller *c)
 	free(state);
 	return 0;
 }
+
 int controller_radio_on(struct controller *c)
 {
 	if (!radio_enabled(c))
@@ -487,6 +480,7 @@ int controller_radio_on(struct controller *c)
 	integer(c->status, "cfun", cfun);
 	return cfun == 1 ? 0 : errorf(CELL_MODEM, "Radio enable readback failed");
 }
+
 static int initialize(struct controller *c)
 {
 	if (c->initialized)
@@ -524,6 +518,7 @@ static int initialize(struct controller *c)
 	c->initialized = true;
 	return 0;
 }
+
 J *registration(const char *raw, const char *prefix)
 {
 	J *rows = at_fields(raw, prefix), *selected = NULL;
@@ -572,6 +567,7 @@ J *registration(const char *raw, const char *prefix)
 	json_object_put(rows);
 	return out;
 }
+
 static J *read_registration(struct controller *c)
 {
 	char *raw = controller_at(c, "AT+CEREG?", 15);
@@ -597,6 +593,7 @@ static J *read_registration(struct controller *c)
 	json_object_object_add(c->status, "nr_registration", nr);
 	return json_object_get(json_object_get_boolean(get(nr, "registered")) ? nr : lte);
 }
+
 static J *waiting(struct controller *c, const char *reason, J *reg)
 {
 	if (controller_set_data(c, NULL) < 0)
@@ -608,6 +605,7 @@ static J *waiting(struct controller *c, const char *reason, J *reg)
 		json_object_object_add(out, "registration", json_object_get(reg));
 	return out;
 }
+
 static J *connected(struct controller *c)
 {
 	J *out = json_object_new_object();
@@ -615,6 +613,7 @@ static J *connected(struct controller *c)
 	json_object_object_add(out, "session", json_object_get(c->data));
 	return out;
 }
+
 J *controller_connect(struct controller *c, unsigned wait_seconds)
 {
 	if (!radio_enabled(c))
@@ -730,7 +729,7 @@ J *controller_connect(struct controller *c, unsigned wait_seconds)
 	if (random_hex(id, 16) < 0)
 		goto fail;
 	string(session, "id", id);
-	string(session, "interface", "sipa_eth0");
+	string(session, "interface", "wwan0");
 	json_object_object_add(session, "profile", json_object_get(wanted));
 	real(session, "connected_uptime", mono());
 	c->error[0] = 0;
@@ -747,6 +746,7 @@ fail:
 	json_object_put(wanted);
 	return NULL;
 }
+
 int controller_refresh(struct controller *c)
 {
 	if (transport_admit(&c->transport) < 0 || sim_refresh(c) < 0)
@@ -803,6 +803,7 @@ int controller_refresh(struct controller *c)
 	}
 	return controller_publish(c);
 }
+
 J *controller_execute(struct controller *c, const char *name, J *args)
 {
 	if (controller_validate(name, args) < 0)
@@ -832,7 +833,7 @@ J *controller_execute(struct controller *c, const char *name, J *args)
 		       json_object_get_boolean(get(args, "automatic_connect")) ? "1" : "0");
 		string(changes, "modem.roaming",
 		       json_object_get_boolean(get(args, "roaming")) ? "1" : "0");
-		int rc = uci_commit(changes, NULL);
+		int rc = cell_config_commit(changes, NULL);
 		json_object_put(changes);
 		if (rc < 0)
 			return NULL;
@@ -873,9 +874,9 @@ J *controller_execute(struct controller *c, const char *name, J *args)
 		c->want_data = true;
 		return controller_connect(c, 10);
 	}
-	if (!strcmp(name, "disconnect") || !strcmp(name, "quiesce")) {
+	if (!strcmp(name, "disconnect")) {
 		c->want_data = false;
-		J *out = controller_disconnect(c, !strcmp(name, "quiesce"));
+		J *out = controller_disconnect(c, false);
 		if (out)
 			boolean(out, "connected", false);
 		return out;
@@ -886,7 +887,7 @@ J *controller_execute(struct controller *c, const char *name, J *args)
 		bool enabled = json_object_get_boolean(get(args, "enabled"));
 		J *changes = json_object_new_object();
 		string(changes, "modem.radio_enabled", enabled ? "1" : "0");
-		int rc = uci_commit(changes, NULL);
+		int rc = cell_config_commit(changes, NULL);
 		json_object_put(changes);
 		if (rc < 0)
 			return NULL;

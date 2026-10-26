@@ -12,7 +12,7 @@ import zlib
 
 PROJECT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT / "tools/lib"))
-from boot_layout import build, image_header, fdt_props, align
+from boot_layout import build, image_header, fdt_props, align, boot_abi
 from memory_layout import ranges, overlap
 from newc import encode, parse as parse_cpio, gz
 
@@ -33,10 +33,7 @@ def package(image, dtb, ramdisk, target, output):
         raise ValueError("Capsule must describe the SY108 board")
     if header["text_offset"] or header["flags"] != 0xa or not 64 <= len(kernel) <= header["memory_size"] <= 0x1e00000:
         raise ValueError("Unsupported ARM64 Image geometry")
-    if chosen.get("udx,boot-policy") != b"openwrt-v1\0" or chosen.get("udx,boot-target") != (target + "\0").encode():
-        raise ValueError("Wrong protected boot target")
-    if "udx,trial-local-lease" not in chosen:
-        raise ValueError("Local runtime lease is required")
+    boot_abi(nodes, target)
     if any(name.startswith("linux,initrd-") for name in chosen):
         raise ValueError("Stale initrd bounds")
     args = chosen.get("bootargs", b"").rstrip(b"\0").split()

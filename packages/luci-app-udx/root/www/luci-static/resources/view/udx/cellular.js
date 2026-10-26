@@ -196,7 +196,7 @@ return view.extend({
                 [
                     _('Operator'),
                     function(r) {
-                        return r.name;
+                        return r.name || r.short_name || r.plmn;
                     }
                 ],
                 [

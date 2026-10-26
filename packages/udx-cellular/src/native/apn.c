@@ -7,6 +7,7 @@
 #include <string.h>
 
 static const char *fields[] = {"name", "apn", "pdp_type", "username", "password", "auth_method"};
+
 static bool credential(const char *s)
 {
 	if (!s || strlen(s) > 64)
@@ -16,6 +17,7 @@ static bool credential(const char *s)
 			return false;
 	return true;
 }
+
 int apn_auth_validate(J *args)
 {
 	const char *method = str(args, "auth_method");
@@ -27,6 +29,7 @@ int apn_auth_validate(J *args)
 		return errorf(CELL_INVALID, "Invalid APN credentials");
 	return 0;
 }
+
 int apn_validate(const char *op, J *args)
 {
 	const char *const save[] = {"id",	"name",	    "apn",	  "pdp_type",
@@ -80,6 +83,7 @@ int apn_validate(const char *op, J *args)
 	}
 	return errorf(CELL_INVALID, "Unknown APN operation");
 }
+
 J *apn_public_auth(J *config)
 {
 	J *out = json_object_new_object();
@@ -89,6 +93,7 @@ J *apn_public_auth(J *config)
 	boolean(out, "password_set", p && *p);
 	return out;
 }
+
 static int compare_id(const void *a, const void *b)
 {
 	J *const *x = a, *const *y = b;
@@ -96,9 +101,10 @@ static int compare_id(const void *a, const void *b)
 		second = json_object_get_int64(get(*y, "id"));
 	return (first > second) - (first < second);
 }
+
 static J *catalog(void)
 {
-	J *sections = uci_sections(), *rows = json_object_new_array();
+	J *sections = cell_config_sections(), *rows = json_object_new_array();
 	if (!sections) {
 		json_object_put(rows);
 		return NULL;
@@ -142,6 +148,7 @@ fail:
 	json_object_put(sections);
 	return NULL;
 }
+
 J *apn_publish(struct controller *c)
 {
 	J *data = catalog();
@@ -168,6 +175,7 @@ J *apn_publish(struct controller *c)
 	}
 	return out;
 }
+
 int apn_configure(struct controller *c)
 {
 	char command[320];
@@ -188,6 +196,7 @@ int apn_configure(struct controller *c)
 	free(raw);
 	return 0;
 }
+
 static int set_config(struct controller *c, J *values)
 {
 	J *changes = json_object_new_object();
@@ -197,7 +206,7 @@ static int set_config(struct controller *c, J *values)
 		snprintf(name, sizeof(name), "modem.%s", key);
 		json_object_object_add(changes, name, json_object_get(value));
 	}
-	int rc = uci_commit(changes, NULL);
+	int rc = cell_config_commit(changes, NULL);
 	json_object_put(changes);
 	if (rc < 0)
 		return -1;
@@ -213,6 +222,7 @@ static int set_config(struct controller *c, J *values)
 	json_object_put(p);
 	return 0;
 }
+
 static J *apply(struct controller *c, J *values)
 {
 	c->fallback_attempted = false;
@@ -271,6 +281,7 @@ static J *apply(struct controller *c, J *values)
 	json_object_object_add(result, "apn", published);
 	return result;
 }
+
 J *apn_direct(struct controller *c, J *args)
 {
 	J *values = jclone(args);
@@ -283,6 +294,7 @@ J *apn_direct(struct controller *c, J *args)
 	json_object_put(values);
 	return out;
 }
+
 J *apn_execute(struct controller *c, const char *op, J *args)
 {
 	if (!strcmp(op, "apn_templates"))
@@ -327,7 +339,7 @@ J *apn_execute(struct controller *c, const char *op, J *args)
 				v = selected ? str(selected, "password") : "";
 			string(values, key, v);
 		}
-		if (uci_commit(values, NULL) < 0)
+		if (cell_config_commit(values, NULL) < 0)
 			goto end;
 		result = json_object_new_object();
 		integer(result, "saved_id", id);
@@ -344,7 +356,7 @@ J *apn_execute(struct controller *c, const char *op, J *args)
 		snprintf(section, sizeof(section), "apn_%lld", (long long)id);
 		J *deletes = json_object_new_array();
 		json_object_array_add(deletes, json_object_new_string(section));
-		int rc = uci_commit(NULL, deletes);
+		int rc = cell_config_commit(NULL, deletes);
 		json_object_put(deletes);
 		if (rc < 0)
 			goto end;

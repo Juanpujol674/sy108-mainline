@@ -2,6 +2,7 @@
  * Parse and validate the misc environment transaction field.
  */
 #include "misc-state.h"
+
 uint32_t udx_crc32(const void *data, size_t size)
 {
 	const unsigned char *p = data;
@@ -13,6 +14,7 @@ uint32_t udx_crc32(const void *data, size_t size)
 	}
 	return ~crc;
 }
+
 static int equal(const unsigned char *p, size_t n, const char *s)
 {
 	size_t i = 0;
@@ -23,6 +25,7 @@ static int equal(const unsigned char *p, size_t n, const char *s)
 	}
 	return i == n;
 }
+
 enum udx_upgrade_state udx_misc_state(const void *data, size_t size, int read_error)
 {
 	const unsigned char *p = data;

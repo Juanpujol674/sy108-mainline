@@ -233,27 +233,10 @@ return view.extend({
                     }
                 ],
                 [
-                    _('Governor'),
+                    _('Available frequencies'),
                     function(r) {
-                        return r.governor;
-                    }
-                ],
-                [
-                    _('AP frequency request'),
-                    function(r) {
-                        return mhz(r.ap_vote_hz);
-                    }
-                ],
-                [
-                    _('CP frequency request'),
-                    function(r) {
-                        return mhz(r.cp_vote_hz);
-                    }
-                ],
-                [
-                    _('Firmware DFS'),
-                    function(r) {
-                        return r.firmware_dfs_enabled == null ? null : !!r.firmware_dfs_enabled;
+                        return (r.available_frequencies || '').trim().split(/\s+/)
+                            .filter(Boolean).map(function(hz) { return mhz(+hz); }).join(', ');
                     }
                 ]
             ],
@@ -262,9 +245,9 @@ return view.extend({
             },
             false);
         embed('sensors',
-              E('section', {class : 'cbi-section'}, [ E('h3', {}, _('DDR clocks')), ddr.node ]));
-        var frequency = initial[2] || {}, cpuPolicy = frequency.cpu || {},
-            ddrPolicy = frequency.ddr || {};
+              E('section', {class : 'cbi-section'}, [ E('h3', {}, _('DDR clocks')),
+                  E('p', {}, _('DDR is managed automatically by firmware. Monitoring only.')), ddr.node ]));
+        var frequency = initial[2] || {}, cpuPolicy = frequency.cpu || {};
         function setting(key, title, options, selected, numeric) {
             var o = f.option(form.ListValue, key, title);
             options.forEach(function(v) {
@@ -283,15 +266,8 @@ return view.extend({
         var cpuMaximum = setting('_cpu_maximum', _('CPU maximum frequency'),
                                  cpuPolicy.frequencies_khz || [], cpuPolicy.max_khz, 1000);
         cpuMaximum.description = _('Set the same minimum and maximum for a fixed CPU frequency.');
-        var ddrGovernor = setting('_ddr_governor', _('DDR governor'), ddrPolicy.governors || [],
-                                  ddrPolicy.governor);
-        var ddrFrequency = setting('_ddr_frequency', _('DDR frequency request'),
-                                   ddrPolicy.frequencies_hz || [], ddrPolicy.requested_hz, 1000000);
-        ddrFrequency.value('0', _('Automatic (release AP request)'));
-        ddrFrequency.description = _(
-            'Firmware also considers CP demand. The actual DDR frequency may exceed the AP request.');
         var frequencyApply =
-            f.option(form.Button, '_frequency_apply', _('Apply frequency settings'));
+            f.option(form.Button, '_frequency_apply', _('Apply CPU frequency settings'));
         frequencyApply.inputtitle = _('Apply');
         frequencyApply.inputstyle = 'apply';
         frequencyApply.description = _('Settings are saved and restored at startup.');
@@ -301,8 +277,7 @@ return view.extend({
                     throw new Error(_('Minimum frequency must not exceed maximum frequency.'));
                 return udx.frequencyApply(
                     cpuGovernor.formvalue('main'), cpuMinimum.formvalue('main'),
-                    cpuMaximum.formvalue('main'), ddrGovernor.formvalue('main'),
-                    ddrFrequency.formvalue('main'));
+                    cpuMaximum.formvalue('main'));
             });
         };
         var boot = udx.table(_('Boot information'), [

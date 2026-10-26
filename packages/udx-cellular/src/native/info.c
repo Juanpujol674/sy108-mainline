@@ -16,6 +16,7 @@ static char *trim(char *s)
 		s[--n] = 0;
 	return s;
 }
+
 static J *useful(const char *raw, const char *command)
 {
 	if (!at_complete(raw)) {
@@ -42,6 +43,7 @@ static J *useful(const char *raw, const char *command)
 	free(copy);
 	return rows;
 }
+
 char *info_identifier(const char *raw, const char *command, const char *prefix, size_t min,
 		      size_t max, bool hex)
 {
@@ -78,6 +80,7 @@ char *info_identifier(const char *raw, const char *command, const char *prefix, 
 	}
 	return result;
 }
+
 static J *matrix(const char *raw)
 {
 	if (!at_complete(raw)) {
@@ -140,6 +143,7 @@ invalid:
 	errorf(CELL_INVALID, "Malformed, overflowing or incomplete SPENGMD matrix");
 	return NULL;
 }
+
 static int infer_band(bool nr, int64_t arfcn)
 {
 	static const int64_t lte[][3] = {{0, 599, 1},	     {1200, 1949, 3},	 {2400, 2649, 5},
@@ -156,11 +160,13 @@ static int infer_band(bool nr, int64_t arfcn)
 			return (int)ranges[i][2];
 	return 0;
 }
+
 static int64_t element(J *rows, size_t r, size_t c)
 {
 	return json_object_get_int64(
 	    json_object_array_get_idx(json_object_array_get_idx(rows, r), c));
 }
+
 J *decode_cells(const char *raw, const char *rat, bool serving)
 {
 	J *rows = matrix(raw);
@@ -258,10 +264,12 @@ invalid:
 	errorf(CELL_INVALID, "Incomplete cell matrix or invalid cell identity");
 	return NULL;
 }
+
 static bool recoverable(void)
 {
 	return cell_error_kind == CELL_INVALID || cell_error_kind == CELL_MODEM;
 }
+
 int info_sim_identity(struct controller *c)
 {
 	J *errors = get(c->status, "info_errors") ? jclone(get(c->status, "info_errors"))
@@ -288,6 +296,7 @@ int info_sim_identity(struct controller *c)
 	json_object_object_add(c->status, "info_errors", errors);
 	return 0;
 }
+
 J *info_signal(struct controller *c)
 {
 	J *f = controller_query(c, "AT+CSQ", 5, "+CSQ:");
@@ -314,6 +323,7 @@ J *info_signal(struct controller *c)
 	json_object_object_add(c->status, "signal", json_object_get(out));
 	return out;
 }
+
 J *info_execute(struct controller *c, const char *operation)
 {
 	if (transport_admit(&c->transport) < 0)
