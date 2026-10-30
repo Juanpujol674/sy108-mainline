@@ -146,8 +146,6 @@ static int restore_block(struct vendor_state *v, unsigned index)
 			return NVU_IMAGE;
 		memcpy(v->work, block->data, length);
 	}
-	if (nv_checksum_sum(v->work, length) != block->sum)
-		return NVU_IMAGE;
 	v->work_index = index;
 	return 0;
 }
@@ -205,19 +203,26 @@ static int load_image(struct nv_ubi_backend *b)
 		e = read_exact(b, b->fd[i], v->header, NV_HEADER, 0);
 		if (e == NVU_DEADLINE || e == NVU_OWNERSHIP)
 			return e;
-		if (e || get32(v->header) != NV_IMAGE_MAGIC ||
-		    get32(v->header + 4) != b->payload_size)
+		if (e)
+			continue;
+		uint32_t stored_size = nv_vendor_payload_size(v->header, v->size);
+		if (!stored_size)
 			continue;
 		uint64_t sum = 0;
 		for (uint32_t off = 0; off < b->payload_size; off += CHUNK) {
 			unsigned index = off / CHUNK;
 			size_t length = block_length(v, index);
-			e = read_exact(b, b->fd[i], v->work, length, (uint64_t)NV_HEADER + off);
-			if (e)
+			/* OEM fixnv loads into a fixed-capacity, erased-byte RAM disk. */
+			memset(v->work, 0xff, length);
+			size_t stored = off < stored_size ? stored_size - off : 0;
+			if (stored > length)
+				stored = length;
+			if (stored &&
+			    (e = read_exact(b, b->fd[i], v->work, stored, (uint64_t)NV_HEADER + off)))
 				break;
+			sum += nv_checksum_sum(v->work, stored);
 			if ((e = store_block(v, index)))
 				return e;
-			sum += v->block[index].sum;
 		}
 		if (e == NVU_DEADLINE || e == NVU_OWNERSHIP)
 			return e;
@@ -279,9 +284,8 @@ static int update_header(struct nv_ubi_backend *b)
 		int e = progress(b);
 		if (e)
 			return e;
-		if ((e = restore_block(v, index)))
-			return e;
-		sum += nv_checksum_sum(v->work, block_length(v, index));
+		/* store_block updates this sum whenever RAM bytes change. */
+		sum += v->block[index].sum;
 	}
 	memset(v->header, 0, NV_HEADER);
 	put32(v->header, NV_IMAGE_MAGIC);
@@ -297,8 +301,8 @@ int nv_ubi_bind(struct nv_ubi_backend *b, struct nv_store *store, const struct n
 		int p, int q, const struct nv_ubi_identity expected[2], uint32_t size, int allow,
 		uint64_t deadline)
 {
-	if (!b || !store || !io || !expected || !size || size > NV_MAX_IMAGE || size % 512 ||
-	    p < 3 || q < 3 || p == q || !io->pread || !io->write || !io->begin_update ||
+	if (!b || !store || !io || !expected || !size || size > NV_MAX_IMAGE ||
+	    p < 0 || q < 0 || p == q || !io->pread || !io->write || !io->begin_update ||
 	    !io->sync || !io->now_ms || !io->check_io || !io->prepare_direct || !io->write_leb)
 		return NVU_CONFIG;
 	memset(b, 0, sizeof(*b));
@@ -462,10 +466,10 @@ out:
 	return e;
 }
 
-static int stock_put(struct nv_ubi_backend *b, unsigned i)
+static int stock_put(struct nv_ubi_backend *b, unsigned i, int expand_image)
 {
 	struct vendor_state *v = b->vendor_state;
-	int full = b->payload_size / 512u < 2u * v->dirty_count ||
+	int full = expand_image || b->payload_size / 512u < 2u * v->dirty_count ||
 		   (b->payload_size == 9437184u && b->store->runtime_force_full);
 	int e = full ? put_volume(b, i) : put_lebs(b, i);
 	if (e)
@@ -499,10 +503,12 @@ int nv_ubi_commit(struct nv_ubi_backend *b, uint32_t group, uint32_t sub)
 	b->sub = sub;
 	if (!v->dirty_count)
 		return nvc_verify_noop(b, group, sub);
+	/* The first write to a short image publishes the padded logical disk. */
+	int expand_image = get32(v->header + 4) != v->size;
 	if ((e = update_header(b)))
 		return fail(b, e, NVU_REJECTED);
 	b->state = NVU_UPDATING_BACKUP;
-	if ((e = stock_put(b, 1)))
+	if ((e = stock_put(b, 1, expand_image)))
 		return fail(b, e, NVU_UNCERTAIN);
 	/* The original protocol checks the backup header checksum before updating
 	 * the primary. A full payload readback is not part of this commit path. */
@@ -512,7 +518,7 @@ int nv_ubi_commit(struct nv_ubi_backend *b, uint32_t group, uint32_t sub)
 	if (memcmp(header + 8, v->header + 8, 4))
 		return fail(b, NVU_IMAGE, NVU_UNCERTAIN);
 	b->state = NVU_UPDATING_PRIMARY;
-	if ((e = stock_put(b, 0)))
+	if ((e = stock_put(b, 0, expand_image)))
 		return fail(b, e, NVU_UNCERTAIN);
 	memset(v->dirty, 0, sizeof(v->dirty));
 	v->dirty_count = 0;

@@ -21,7 +21,7 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def package(image, dtb, ramdisk, target, output):
+def package(image, dtb, ramdisk, target, output, storage_budget=None):
     kernel = image.read_bytes()
     tree = dtb.read_bytes()
     header = image_header(kernel)
@@ -59,9 +59,11 @@ def package(image, dtb, ramdisk, target, output):
     prefix[128:192] = metadata
     wrapper = bytes(prefix) + compressed
     data = build(wrapper, rd, tree)
-    capacity = (133 if target == "openwrt" else 149) * 126976
-    if len(data) > capacity:
-        raise ValueError("Capsule exceeds its original target volume")
+    format_capacity = (133 if target == "openwrt" else 149) * 126976
+    # Factory Main volumes can be 108 LEBs; do not require resizing them.
+    capacity = storage_budget if storage_budget is not None else (108 if target == "openwrt" else 149) * 126976
+    if capacity <= 0 or len(data) > capacity or len(data) > format_capacity:
+        raise ValueError("Capsule exceeds the storage budget or native-loader limit")
     memory, reserved = ranges(nodes)
     position = struct.unpack_from(">I", tree, 16)[0]
     while True:
@@ -84,7 +86,8 @@ def package(image, dtb, ramdisk, target, output):
     output.write_bytes(data)
     report = {"board": "sy108", "soc": "udx710", "target": target, "bytes": len(data),
               "sha256": sha(data), "kernel_sha256": sha(kernel), "dtb_sha256": sha(tree),
-              "ramdisk_sha256": sha(rd), "volume_capacity": capacity, "regions": regions}
+              "ramdisk_sha256": sha(rd), "volume_capacity": capacity,
+              "storage_budget_bytes": capacity, "native_loader_limit_bytes": format_capacity, "regions": regions}
     output.with_suffix(output.suffix + ".json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
@@ -96,6 +99,7 @@ if __name__ == "__main__":
     parser.add_argument("--ramdisk", type=Path)
     parser.add_argument("--target", choices=("openwrt", "recovery"), required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--storage-budget", type=int, help="Target volume budget in bytes; defaults to the smallest supported Main slot")
     arguments = parser.parse_args()
     print(json.dumps(package(arguments.image, arguments.dtb, arguments.ramdisk, arguments.target,
-                             arguments.output), indent=2))
+                             arguments.output, arguments.storage_budget), indent=2))

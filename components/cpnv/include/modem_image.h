@@ -9,6 +9,14 @@
 #define MCI_PREFIX_BYTES 512u
 #define MCI_SUFFIX_BYTES 4096u
 
+enum mci_format {
+	MCI_RAW,
+	MCI_SCI,
+	MCI_SCI_SIGNED,
+	MCI_SCI_PAYLOAD,
+	MCI_DHTB
+};
+
 enum mci_result {
 	MCI_OK = 0,
 	MCI_E_ARGUMENT = -1,
@@ -62,5 +70,15 @@ struct mci_plan {
  */
 int mci_parse_sci_header(const uint8_t *header, size_t header_bytes, uint32_t header_offset,
 			 uint64_t source_bytes, uint64_t target_capacity, struct mci_plan *out);
+
+/* Native remoteproc consumes the selected SCI payload, without its outer
+ * signing prefix or trailer. Bounds apply to the bytes actually copied. */
+int mci_parse_sci_payload(const uint8_t *, size_t, uint32_t, uint64_t, uint64_t,
+			  struct mci_plan *);
+
+/* DHTB v1 declares its payload size at byte 48, after a 512-byte prefix.
+ * Signing trailers and unused volume bytes are not part of the payload. */
+int mci_parse_dhtb_header(const uint8_t *, size_t, uint64_t, uint64_t,
+			  struct mci_plan *);
 
 #endif

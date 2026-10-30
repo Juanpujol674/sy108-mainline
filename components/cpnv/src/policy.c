@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "cpnv.h"
+#include "modem_image.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -20,24 +21,56 @@ static int num(const char *s, uint64_t *v)
 	return 0;
 }
 
-static int digest(const char *s, unsigned char *v)
+static int firmware_record(char *text, struct firmware *f)
 {
-	if (strlen(s) != 64)
-		return -1;
-	for (unsigned i = 0; i < 32; i++) {
-		unsigned n = 0;
-		for (unsigned j = 0; j < 2; j++) {
-			char c = s[2 * i + j];
-			unsigned d = c >= '0' && c <= '9'   ? (unsigned)(c - '0')
-				     : c >= 'a' && c <= 'f' ? (unsigned)(c - 'a' + 10)
-							    : 16;
-			if (d > 15)
-				return -1;
-			n = n * 16 + d;
-		}
-		v[i] = (unsigned char)n;
+	static const char *const names[] = {"modem", "v3phy", "nrphy", "nrdsp1", "nrdsp2", "deltanv"};
+	static const char *const formats[] = {"raw", "sci", "sci-signed", "sci-payload", "dhtb"};
+	char *token[6], *save;
+	unsigned count = 0;
+	for (char *v = strtok_r(text, " \t", &save); v; v = strtok_r(NULL, " \t", &save)) {
+		if (count == 6)
+			return -EINVAL;
+		token[count++] = v;
 	}
-	return 0;
+	if (count < 2)
+		return -EINVAL;
+	memset(f, 0, sizeof(*f));
+	if (token[0][0] >= '0' && token[0][0] <= '9') {
+		/* Existing conffiles used six columns, including an unused digest.
+		 * Keep them readable and migrate the old DHTB payload slices. */
+		uint64_t segment, format;
+		if (count != 6 || num(token[0], &segment) || segment >= 6 ||
+		    num(token[1], &format) || format > MCI_SCI_PAYLOAD ||
+		    num(token[3], &f->offset) || num(token[4], &f->length) ||
+		    num(token[5], &f->target_offset))
+			return -EINVAL;
+		f->segment = (unsigned)segment;
+		f->format = (unsigned)format;
+		if (f->format == MCI_RAW && segment >= 1 && segment <= 4 &&
+		    f->offset == MCI_PREFIX_BYTES && !f->target_offset) {
+			f->format = MCI_DHTB;
+			f->offset = f->length = 0;
+		}
+	} else {
+		for (f->segment = 0; f->segment < 6; f->segment++)
+			if (!strcmp(token[0], names[f->segment]))
+				break;
+		for (f->format = 0; f->format <= MCI_DHTB; f->format++)
+			if (!strcmp(token[1], formats[f->format]))
+				break;
+		if (f->segment == 6 || f->format > MCI_DHTB)
+			return -EINVAL;
+		if (f->format == MCI_RAW) {
+			if (count != 5 || num(token[2], &f->offset) || num(token[3], &f->length) ||
+			    num(token[4], &f->target_offset))
+				return -EINVAL;
+		} else if (count != 2) {
+			return -EINVAL;
+		}
+	}
+	if (f->format == MCI_RAW)
+		return f->length ? 0 : -EINVAL;
+	return f->offset || f->length || f->target_offset ? -EINVAL : 0;
 }
 
 int cpnv_policy_parse(const char *text, size_t n, struct cpnv_policy *p)
@@ -67,31 +100,13 @@ int cpnv_policy_parse(const char *text, size_t n, struct cpnv_policy *p)
 			continue;
 		}
 		if (!strncmp(s, "firmware=", 9)) {
-			char *token[6], *state;
-			unsigned count = 0;
-			for (char *v = strtok_r(s + 9, " ", &state); v;
-			     v = strtok_r(NULL, " ", &state)) {
-				if (count == 6)
-					return -EINVAL;
-				token[count++] = v;
-			}
-			if (count != 6 || p->count >= 6)
+			if (p->count >= 6)
 				return -EINVAL;
-			uint64_t segment, format, off, len, target;
-			if (num(token[0], &segment) || segment > 5 || num(token[1], &format) ||
-			    format > 3 || num(token[3], &off) || num(token[4], &len) ||
-			    num(token[5], &target) || (fw & (1u << segment)))
+			struct firmware *f = &p->firmware[p->count];
+			if (firmware_record(s + 9, f) || (fw & (1u << f->segment)))
 				return -EINVAL;
-			struct firmware *f = &p->firmware[p->count++];
-			f->segment = (unsigned)segment;
-			f->format = (unsigned)format;
-			f->offset = off;
-			f->length = len;
-			f->target_offset = target;
-			if (digest(token[2], f->sha256) || (format && (off || len || target)) ||
-			    (!format && !len))
-				return -EINVAL;
-			fw |= 1u << segment;
+			p->count++;
+			fw |= 1u << f->segment;
 			continue;
 		}
 		char *eq = strchr(s, '=');

@@ -14,7 +14,6 @@
 struct firmware {
 	unsigned segment, format;
 	uint64_t offset, length, target_offset;
-	unsigned char sha256[32];
 };
 
 struct cpnv_policy {

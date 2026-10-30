@@ -69,6 +69,22 @@ static int output_open(unsigned segment)
 	return open(path, O_RDWR | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
 }
 
+static int read_header(struct nv_worker *w, int fd, uint8_t *data, size_t size, uint64_t off)
+{
+	for (size_t done = 0; done < size;) {
+		int e = check(w);
+		if (e)
+			return e;
+		ssize_t n = pread(fd, data + done, size - done, (off_t)(off + done));
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			return n < 0 ? -errno : -EIO;
+		done += (size_t)n;
+	}
+	return 0;
+}
+
 static int firmware(struct nv_worker *w, const struct firmware *f)
 {
 	struct volume volume = {.fd = -1};
@@ -95,7 +111,7 @@ static int firmware(struct nv_worker *w, const struct firmware *f)
 		bytes = (uint64_t)n;
 	}
 	struct mci_plan plan = {0};
-	if (!f->format) {
+	if (f->format == MCI_RAW) {
 		if (f->offset > bytes || f->length > bytes - f->offset ||
 		    f->target_offset > capacity[f->segment] ||
 		    f->length > capacity[f->segment] - f->target_offset) {
@@ -104,24 +120,29 @@ static int firmware(struct nv_worker *w, const struct firmware *f)
 		}
 		plan.extent_count = 1;
 		plan.extents[0] = (struct mci_extent){f->offset, f->target_offset, f->length};
-	} else {
-		uint8_t header[MCI_HEADER_BYTES];
-		unsigned offset = f->format == 1 ? 0 : 512;
-		if (pread(in, header, sizeof header, offset) != (ssize_t)sizeof header ||
-		    mci_parse_sci_header(header, sizeof header, offset, bytes, capacity[f->segment],
-					 &plan)) {
+	} else if (f->format == MCI_DHTB) {
+		uint8_t header[MCI_PREFIX_BYTES];
+		e = read_header(w, in, header, sizeof header, 0);
+		if (e)
+			goto done;
+		if (mci_parse_dhtb_header(header, sizeof header, bytes, capacity[f->segment], &plan)) {
 			e = -EBADMSG;
 			goto done;
 		}
-		if (f->format == 3) {
-			if (plan.extent_count != 2 || plan.extents[1].length <= MCI_SUFFIX_BYTES) {
-				e = -EBADMSG;
-				goto done;
-			}
-			plan.extents[0] = plan.extents[1];
-			plan.extents[0].target_offset = 0;
-			plan.extents[0].length -= MCI_SUFFIX_BYTES;
-			plan.extent_count = 1;
+	} else {
+		uint8_t header[MCI_HEADER_BYTES];
+		unsigned offset = f->format == MCI_SCI ? 0 : MCI_PREFIX_BYTES;
+		e = read_header(w, in, header, sizeof header, offset);
+		if (e)
+			goto done;
+		int parsed = f->format == MCI_SCI_PAYLOAD
+			     ? mci_parse_sci_payload(header, sizeof header, offset, bytes,
+					     capacity[f->segment], &plan)
+			     : mci_parse_sci_header(header, sizeof header, offset, bytes,
+					    capacity[f->segment], &plan);
+		if (parsed) {
+			e = -EBADMSG;
+			goto done;
 		}
 	}
 	out = output_open(f->segment);
@@ -141,21 +162,49 @@ done:
 	return e;
 }
 
+/* Startup repair already verified the payload. Do not copy unchecked volume
+ * tail bytes into CP RAM; the original RAM disk uses erased-byte padding. */
+static int nv_copy_payload(struct nv_worker *worker, int source, int output, uint32_t capacity)
+{
+	uint8_t header[NV_HEADER], pad[4096];
+	int e = read_header(worker, source, header, sizeof header, 0);
+	if (e)
+		return e;
+	uint32_t size = nv_vendor_payload_size(header, capacity);
+	if (!size)
+		return -EBADMSG;
+	struct mci_extent extent = {.source_offset = NV_HEADER, .length = size};
+	e = copy_extent(worker, source, output, &extent);
+	memset(pad, 0xff, sizeof pad);
+	for (uint32_t off = size; !e && off < capacity;) {
+		if ((e = check(worker)))
+			break;
+		size_t n = capacity - off < sizeof pad ? capacity - off : sizeof pad;
+		ssize_t done = pwrite(output, pad, n, off);
+		if (done < 0 && errno == EINTR)
+			continue;
+		if (done <= 0)
+			return done < 0 ? -errno : -EIO;
+		off += (uint32_t)done;
+	}
+	return e;
+}
+
 static int nv_output(struct nv_worker *worker, unsigned pair)
 {
 	int output = output_open(7 + pair);
 	if (output < 0)
 		return -errno;
-	struct mci_extent extent = {.source_offset = NV_HEADER, .length = capacity[7 + pair]};
 	/* Startup repair has already validated both copies. Keep primary-first boot
 	 * selection, and stream only the payload into the firmware-loader material. */
-	int error = copy_extent(worker, worker->volumes[pair * 2].fd, output, &extent);
+	int error = nv_copy_payload(worker, worker->volumes[pair * 2].fd, output, capacity[7 + pair]);
 	if (error && error != -ECANCELED && error != -ETIMEDOUT) {
 		if (ftruncate(output, 0))
 			error = -errno;
 		else
 			error =
-			    copy_extent(worker, worker->volumes[pair * 2 + 1].fd, output, &extent);
+			    nv_copy_payload(worker, worker->volumes[pair * 2 + 1].fd, output,
+					    capacity[7 + pair]);
 	}
 	if (!error && fsync(output))
 		error = -errno;

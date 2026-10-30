@@ -4,7 +4,7 @@ SY108_RECIPE_DIR := $(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 include $(TOPDIR)/rules.mk
 PKG_NAME:=udx-cpnv
 PKG_VERSION:=4.0
-PKG_RELEASE:=6
+PKG_RELEASE:=7
 PKG_LICENSE:=GPL-2.0-only MIT
 PKG_BUILD_DEPENDS:=openssl liblz4
 SY108_SOURCE_PATHS := packages/udx-cpnv components/cpnv
