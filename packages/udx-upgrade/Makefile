@@ -3,7 +3,7 @@ SY108_RECIPE_DIR := $(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 include $(TOPDIR)/rules.mk
 PKG_NAME:=udx-upgrade
 PKG_VERSION:=4.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-2.0-only
 SY108_SOURCE_PATHS := packages/udx-upgrade components/boot-format components/system
 include $(SY108_RECIPE_DIR)../source.mk

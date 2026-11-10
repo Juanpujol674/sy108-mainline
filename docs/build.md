@@ -21,6 +21,24 @@ Linux v7.3 的合并以官方 v7.3-rc7 为三方合并基线。仓库原先导�
 
 `firmware.py main` 与 `firmware.py recovery` 共用 `out/openwrt-build` 构建树（工具链、feeds 与下载缓存共享），需串行执行。构建完成后，产物分别输出至 `out/images/main` 与 `out/images/recovery`。每套产物的 `build.json` 记录实际构建使用的 `integration_commit` 和内核锁定提交；后续文档修订独立于已构建镜像版本。
 
+Main Capsule 默认按 108 × 126,976 字节（13,713,408 字节）的存储预算打包，以适合已分析样本中的较小 boot 卷。`tools/image/capsule.py --storage-budget <字节数>` 可为特定目标指定预算；这不会调整设备卷容量，也不会放宽原生加载器的格式上限（Main 为 133 × 126,976 字节，Recovery 为 149 × 126,976 字节）。安装时仍按实际 boot 和根卷容量检查，SquashFS 头声明的有效大小不得超过实际镜像长度。
+
+## 首次安装与后续升级
+
+以下流程要求设备已经使用配套原生 U-Boot，并能进入本项目的 RAM Recovery。`sysupgrade` 不负责安装 SPL、SML、U-Boot 或 Recovery。不同设备的启动链和板级兼容性需要另行确认，不能仅凭卷容量足够判定可刷。
+
+首次安装使用 Recovery 中的标准命令：
+
+```sh
+sysupgrade -n /tmp/sysupgrade.bin
+```
+
+此操作会替换系统并清空原厂 userdata。安装程序要求 boot、system、userdata 均为动态 UBI 卷，system 对应 `ubi0_21`，且镜像能装入实际卷容量。两个 OpenWrt 卷名均不存在时，程序以一次原子改名操作将 `system`/`userdata` 改为 `rootfs`/`rootfs_data`，然后写入系统。它复用现有空间，不按固定块数扩缩卷，也不改动 NV、基带或启动链卷。混合卷名布局和根卷 ID 不匹配会被拒绝。
+
+原厂 userdata 不属于已安装的 OpenWrt 配置，因此首次安装使用 `-n`。Recovery 通过 OpenWrt 标准镜像校验通知告知界面不可保留配置；命令行保留配置请求也会在写入前被拒绝。
+
+已安装 `rootfs`/`rootfs_data` 后，可在 Main 或 Recovery 中正常执行 `sysupgrade /tmp/sysupgrade.bin` 保留 OpenWrt 配置，或加 `-n` 清空配置。校验失败时应检查镜像、卷容量和启动 ABI；强制升级不能解除平台写入阶段的容量及布局检查。
+
 ## 独立启动器
 
 `sy108-uboot-spl` 启动器在该独立仓库自身的 Linux AMD64 Docker 环境中构建并完成 QEMU/Unicorn 离线仿真校验：

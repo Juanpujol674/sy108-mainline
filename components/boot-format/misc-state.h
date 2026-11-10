@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #define UDX_MISC_ENV_BYTES 0x100000u
+/* Installed native-loader format limits, not required UBI volume sizes. */
 #define UDX_BOOT_VOLUME_BYTES (133u * 126976u)
 #define UDX_RECOVERY_VOLUME_BYTES (149u * 126976u)
 #define UDX_BOOT_STATE_KEY "udx_boot_state"

@@ -28,8 +28,8 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
-root=$(sy108_volume rootfs 397)
-data=$(sy108_volume rootfs_data 426)
+root=$(sy108_volume rootfs)
+data=$(sy108_volume rootfs_data)
 if [ ! -e "/sys/class/block/ubiblock${root#ubi}" ]; then
 	ubiblock -c "/dev/$root"
 	created_block=/dev/$root

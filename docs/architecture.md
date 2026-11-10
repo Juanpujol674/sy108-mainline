@@ -37,6 +37,25 @@ HALO 的 RSA 与摘要直接使用 OpenSSL，保留协议字序、编码和运�
 
 NV 使用原厂格式、checksum 宽度、双副本选择及 group/sequence。提交按原有规则先更新备份并同步、检查备份头 checksum，再更新主副本并同步；完成后才发送最终 36 字节 ACK。ACK 写入成功表示本地 transport 接收，不能证明 CP 已收到。分块 RAM 缓存使用系统 liblz4。
 
+NV 头声明的有效长度、CP 的逻辑窗口和 UBI 卷容量分别处理。fixnv 和 runtimenv 的逻辑窗口保持 7 MiB、9 MiB，校验只覆盖合法头声明的有效数据，允许非 512 字节对齐的短镜像。启动时将有效数据复制到 RAM，剩余逻辑窗口填充 `0xff`；修复坏副本时只复制有效源的头和 payload。缓存身份及事务边界始终使用逻辑窗口，避免短镜像改变后续缓存匹配。对短镜像的首次实际写入通过完整卷更新发布填充后的逻辑镜像；未修改数据的事务不触发扩展。
+
+### 固件加载配置
+
+`/etc/udx-cpnv-warm/profile` 按段名和镜像格式描述加载方式，默认六段配置为：
+
+```ini
+firmware=modem sci-payload
+firmware=v3phy dhtb
+firmware=nrphy dhtb
+firmware=nrdsp1 dhtb
+firmware=nrdsp2 dhtb
+firmware=deltanv raw 0 1048576 0
+```
+
+`sci-payload` 根据偏移 512 处的 SCI1 描述符选择 modem payload；`dhtb` 根据 DHTB 头的长度字段读取 PHY/DSP payload。两者都检查源范围和目标内存窗口，不依赖某台设备的镜像固定长度。`raw` 的三个数依次是源偏移、读取长度和目标偏移；deltanv 使用现有 1 MiB 固定窗口。PM_SYS 的加载方式保持不变。
+
+profile 属于保留配置，升级后仍支持原来的六列数字记录。旧 PHY/DSP 记录采用 raw 格式、源偏移 512、目标偏移 0 时，自动按 DHTB 头取长度，忽略旧配置中的固定 payload 长度；新格式中显式指定的 `raw` 不做转换。旧摘要列不参与加载校验。需要保留封装的配置可使用 `sci`（SCI1 位于偏移 0）或 `sci-signed`（SCI1 位于偏移 512，保留原有前后封装）。
+
 ### CPNV 状态与停止
 
 `udx.cpnv` 只提供 `status`、`quiesce`。状态包括 `starting`、`running`、`failed`、`quiescing`、`quiesced`，保留以下字段：
@@ -75,5 +94,9 @@ MCU 使用 SP UART serdev，IIO 暴露 ADC3..5。USB 事件经一次协议 ACK �
 `luci-app-sy108-system` 提供 Main/Recovery 独立维护视图，经 `menu.d` 接入。官方 `luci-mod-system` 的 flash/reboot 源码保持原样。
 
 升级和配置重置先调用 `udx-system-quiesce`，依次检查 cellular、CPNV 的返回码，失败立即退出。成功后才写 misc pending、申请升级窗口并进入标准 sysupgrade stage2。USB 保持到 stage2，由 procd 切入 RAM 环境后更新 Main 的 boot/rootfs 卷并保存配置。
+
+安装和升级按设备实际 UBI 卷容量检查镜像，不要求 boot/rootfs/rootfs_data 等于某套固定 LEB 数。首次安装仅在原生 RAM Recovery 中接受原厂 `system`/`userdata` 布局，并用一次 `ubirename` 将二者改名为 `rootfs`/`rootfs_data`，保留卷 ID 和容量。当前启动 ABI 要求根卷为 `ubi0_21`；卷容量可变并不放宽这一约束。具体前置条件和命令见[构建维护](build.md#首次安装与后续升级)。
+
+任何改名、镜像写入、数据卷清空或配置恢复失败都会停止后续操作。仅在写入和所需的配置恢复成功后选择 trial；准备阶段写下的 pending 状态供原生启动器回退 Recovery。`misc` 至少容纳 1 MiB 环境区，状态编辑保留其他环境键，并按实际卷容量读写以保留环境区之后的全部字节。
 
 正常停止按 cellular（12）、CPNV（15）、USB（20）、runtime 的顺序执行。普通关机的收尾失败记录日志后继续原有停止流程。Recovery 镜像单独维护；交付顺序为先升级并验收 Main，再写 Recovery、整卷读回并验证 Main → Recovery → Main。

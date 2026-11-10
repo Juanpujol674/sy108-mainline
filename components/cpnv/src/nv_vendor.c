@@ -14,10 +14,18 @@ static uint32_t get32(const uint8_t *p)
 	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
 
-int nv_vendor_valid(const uint8_t *p, size_t n, uint32_t payload, unsigned *bits)
+uint32_t nv_vendor_payload_size(const uint8_t header[NV_HEADER], uint32_t capacity)
 {
-	if (!p || !payload || payload > NV_MAX_IMAGE || payload % 512 ||
-	    n != (size_t)payload + 512 || get32(p) != NV_IMAGE_MAGIC || get32(p + 4) != payload)
+	uint32_t size = get32(header + 4);
+	return get32(header) == NV_IMAGE_MAGIC && size && size <= capacity ? size : 0;
+}
+
+int nv_vendor_valid(const uint8_t *p, size_t n, uint32_t capacity, unsigned *bits)
+{
+	if (!p || n < NV_HEADER || !capacity || capacity > NV_MAX_IMAGE)
+		return 0;
+	uint32_t payload = nv_vendor_payload_size(p, capacity);
+	if (!payload || payload > n - NV_HEADER)
 		return 0;
 	uint32_t sum = get32(p + 8);
 	unsigned mode;
@@ -63,13 +71,15 @@ static int read_at(int fd, uint8_t *p, size_t length, uint64_t base, uint64_t en
 	return timely(end);
 }
 
-static int valid_stored_image(int fd, uint32_t payload, uint8_t first[8], uint64_t end)
+static int valid_stored_image(int fd, uint32_t capacity, uint8_t first[4],
+			      uint32_t *payload_size, uint64_t end)
 {
 	uint8_t header[NV_HEADER];
 	int e = read_at(fd, header, sizeof(header), 0, end);
 	if (e)
 		return e;
-	if (get32(header) != NV_IMAGE_MAGIC || get32(header + 4) != payload)
+	uint32_t payload = nv_vendor_payload_size(header, capacity);
+	if (!payload || (first && payload < 4))
 		return -EBADMSG;
 	uint8_t *block = malloc(IO_CHUNK);
 	if (!block)
@@ -82,25 +92,27 @@ static int valid_stored_image(int fd, uint32_t payload, uint8_t first[8], uint64
 		if ((e = read_at(fd, block, n, (uint64_t)NV_HEADER + off, end)))
 			break;
 		if (!off && first)
-			memcpy(first, block, 8);
+			memcpy(first, block, 4);
 		sum += nv_checksum_sum(block, n);
 		off += (uint32_t)n;
 	}
 	if (!e && get32(header + 8) != nv_checksum_finish(sum, 64) &&
 	    get32(header + 8) != nv_checksum_finish(sum, 32))
 		e = -EBADMSG;
+	if (!e && payload_size)
+		*payload_size = payload;
 	free(block);
 	return e;
 }
 
 int nv_vendor_repair_pair(const int fd[2], uint32_t payload, uint64_t end)
 {
-	if (!fd || fd[0] < 3 || fd[1] < 3 || fd[0] == fd[1] || !payload || payload > NV_MAX_IMAGE ||
-	    payload % 512)
+	if (!fd || fd[0] < 0 || fd[1] < 0 || fd[0] == fd[1] || !payload || payload > NV_MAX_IMAGE)
 		return -EINVAL;
 	int good[2], e = 0;
+	uint32_t sizes[2];
 	for (unsigned i = 0; i < 2; i++) {
-		int r = valid_stored_image(fd[i], payload, NULL, end);
+		int r = valid_stored_image(fd[i], payload, NULL, &sizes[i], end);
 		if (r == -ETIMEDOUT || r == -ENOMEM)
 			return r;
 		good[i] = !r;
@@ -110,7 +122,7 @@ int nv_vendor_repair_pair(const int fd[2], uint32_t payload, uint64_t end)
 	if (!good[0] && !good[1])
 		return -EBADMSG;
 	unsigned source = good[0] ? 0u : 1u, target = source ^ 1u;
-	size_t length = (size_t)payload + NV_HEADER;
+	size_t length = (size_t)sizes[source] + NV_HEADER;
 	uint8_t *data = malloc(IO_CHUNK), *check = malloc(IO_CHUNK);
 	if (!data || !check) {
 		e = -ENOMEM;
@@ -178,11 +190,11 @@ out:
 int nv_vendor_initial_timestamps(const int fix_fd[2], int runtime_fd, uint32_t *fix_value,
 				 uint32_t *runtime_value, uint64_t deadline)
 {
-	uint8_t first_words[8], head[1024];
+	uint8_t first_words[4], head[1024];
 	int e = -EBADMSG;
 	unsigned first = (rand() & 1) ? 0u : 1u;
 	for (unsigned attempt = 0; attempt < 2; attempt++) {
-		e = valid_stored_image(fix_fd[first ^ attempt], 7340032u, first_words, deadline);
+		e = valid_stored_image(fix_fd[first ^ attempt], 7340032u, first_words, NULL, deadline);
 		if (e == -ETIMEDOUT || e == -ENOMEM)
 			return e;
 		if (!e)

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #define _GNU_SOURCE
 #include "capsule.h"
+#include <errno.h>
 #include <fcntl.h>
 #include <libfdt.h>
 #include <stdint.h>
@@ -18,23 +19,41 @@ static int property(const void *dt, int node, const char *name, const char *valu
 	return p && bytes == (int)strlen(value) + 1 && !memcmp(p, value, bytes);
 }
 
+static int size_arg(const char *text, unsigned long long *value)
+{
+	char *end;
+	if (!*text || *text == '-')
+		return -1;
+	errno = 0;
+	*value = strtoull(text, &end, 10);
+	return errno || *end || !*value ? -1 : 0;
+}
+
+static uint64_t le64(const unsigned char *p)
+{
+	uint64_t n = 0;
+	for (unsigned i = 0; i < 8; i++)
+		n |= (uint64_t)p[i] << (8 * i);
+	return n;
+}
+
 int main(int argc, char **argv)
 {
 	struct stat st;
 	struct udx_boot_parts parts;
 	int fd, result = 1;
 	void *data;
-	if (argc != 4)
+	if (argc != 6)
 		return 64;
-	char *end;
-	unsigned long long root_bytes = strtoull(argv[3], &end, 10);
-	if (*end || root_bytes < 96 || root_bytes > 397u * 126976u)
+	unsigned long long root_bytes, boot_capacity, root_capacity;
+	if (size_arg(argv[3], &root_bytes) || size_arg(argv[4], &boot_capacity) ||
+	    size_arg(argv[5], &root_capacity) || root_bytes < 96 || root_bytes > root_capacity)
 		return 1;
 	fd = open(argv[1], O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
 	if (fd < 0)
 		return 1;
 	if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
-	    st.st_size > UDX_BOOT_VOLUME_BYTES) {
+	    (uint64_t)st.st_size > boot_capacity || st.st_size > UDX_BOOT_VOLUME_BYTES) {
 		close(fd);
 		return 1;
 	}
@@ -57,7 +76,8 @@ int main(int argc, char **argv)
 		goto done;
 	int bad = read(fd, header, sizeof(header)) != sizeof(header);
 	close(fd);
-	if (bad || memcmp(header, "hsqs", 4) || header[28] != 4 || header[29])
+	if (bad || memcmp(header, "hsqs", 4) || header[28] != 4 || header[29] ||
+	    le64(header + 40) < sizeof(header) || le64(header + 40) > root_bytes)
 		goto done;
 	result = 0;
 done:
